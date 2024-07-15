@@ -1,0 +1,63 @@
+blobattributeexporter:
+  traces:
+    attributes:
+      rules:
+      - name: http_requests
+        match:
+          key: http.request.body.content
+        action:
+          upload:
+            destination_uri: gs://${env.GCS_BUCKET_NAME}/httplogs/${trace_id}/${span_id}/request.json
+            content_type:
+              static_value: application/json
+      - name: http_responses
+        match:
+          key: http.response.body.content
+        action:
+          upload:
+            destination_uri: gs://${env.GCS_BUCKET_NAME}/httplogs/${trace_id}/${span_id}/response.json
+            content_type:
+              static_value: application/json
+            labels:
+              - key: status_code
+                value:
+                  extraction:
+                    expression: span.attributes[http.response.status_code]
+      - name: llm_prompts
+        match:
+          key: gen_ai.prompt
+        action:
+          sampling:
+            enabled: true
+            percent: 10
+          upload:
+            destination_uri: gs://${env.GCS_BUCKET_NAME}/genailogging/${trace_id}/${span_id}/prompt
+            content_type:
+              extraction:
+                expression: span.attributes[gen_ai.prompt.content_type]
+            labels:
+              - key: token_count
+                value:
+                  extraction:
+                    expression: span.attributes[gen_ai.usage.prompt_tokens]
+      - name: llm_responses
+        match:
+          key: gen_ai.completions
+        action:
+          sampling:
+            enabled: true
+            percent: 10
+          upload:
+            destination_uri: gs://${env.GCS_BUCKET_NAME}/genailogging/${trace_id}/${span_id}/response
+            content_type:
+              automatic:
+                enabled: true
+          labels:
+            - key: response_id
+              value:
+                extraction:
+                  expression: span.attributes[gen_ai.response.id]
+            - key: token_count
+                value:
+                  extraction:
+                    expression: span.attributes[gen_ai.usage.completion_tokens]
