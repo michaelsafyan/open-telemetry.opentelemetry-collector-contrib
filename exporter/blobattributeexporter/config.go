@@ -149,10 +149,15 @@ func validateTraceLocation(ruleName string, location string) error {
 
 // Verifies that the configuration is valid.
 func (tac *TraceAttributeConfig) Validate() error {
+	names := map[string]bool
 	for _, rule := range tac.Rule {
 		if err := rule.Validate() ; err != nil {
 			return err
 		}
+		if _, found := names[rule.Name] ; found {
+			return fmt.Errorf("Rule name %v found more than once.", rule.Name)
+		}
+		names[rule.Name] = true
 		for _, location := range rule.Match.Locations {
 			if err := validateTraceLocation(rule.name, location) ; err != nil {
 				return err
@@ -164,31 +169,63 @@ func (tac *TraceAttributeConfig) Validate() error {
 
 // Verifies that the configuration is valid.
 func (acr *AttributeConfigRule) Validate() error {
-	// TODO: implement
+	if len(acr.Name) == 0 {
+		return errors.New("Missing required name for config rule.")
+	}
+	if err := acr.Match.Validate() ; err != nil {
+		return err
+	}
+	if err := acr.Action.Validate() ; err != nil {
+		return err
+	}
 	return nil
 }
 
 // Verifies that the configuration is valid.
 func (mc *MatchConfig) Validate() error {
-	// TODO: implement
+	if len(mc.Key) == 0  {
+		return errors.New("Missing required key in match configuration.")
+	}
 	return nil
 }
 
 // Verifies that the configuration is valid.
 func (ac *ActionConfig) Validate() error {
-	// TODO: implement
+	if err := ac.Sampling.Validate() ; err != nil {
+		return err
+	}
+	if err := ac.UploadConfig.Validate() ; err != nil {
+		return err
+	}
 	return nil
 }
 
 // Verifies that the configuration is valid.
 func (sc *SamplingConfig) Validate() error {
-	// TODO: implement
+	if sc.Percent < 0 || sc.Percent > 100 {
+		return fmt.Errorf("Invalid percentage: %v", sc.Percent)
+	}
 	return nil
 }
 
 // Verifies that the configuration is valid.
 func (uc *UploadConfig) Validate() error {
-	// TODO: implement
+	if len(uc.DestinationUri) == 0 {
+		return errors.New("Destination URI must not be empty.")
+	}
+	if err := uc.ContentType.Validate() ; err != nil {
+		return err
+	}
+	metadataKeys := map[string]bool
+	for _, metadata := range uc.MetadataLabelConfig {
+		if err := metadata.Validate() ; err != nil {
+			return err
+		}
+		if _, found := metadataKeys[metadata.Key] ; if found {
+			return errors.New("Duplicate metadata key: %v", metadata.Key)
+		}
+		metadataKeys[metadata.Key] = true
+	}
 	return nil
 }
 
