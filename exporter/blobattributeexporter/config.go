@@ -229,15 +229,44 @@ func (uc *UploadConfig) Validate() error {
 	return nil
 }
 
-// Verifies that the configuration is valid.
-func (ctc *ContentTypeConfig) Validate() error {
-	// TODO: implement
+// Verifies that the given content type string is valid.
+func validateContentTypeString(ct string) error {
+	// TODO: verify that the content type is well formed.
 	return nil
 }
 
 // Verifies that the configuration is valid.
+func (ctc *ContentTypeConfig) Validate() error {
+	// Treat fields like a "oneof"
+	if ctc.Automatic.Enabled && len(ctc.StaticValue) > 0 {
+		return errors.New("Cannot set both 'static_value' and 'automatic.enabled: true' for Content Type.")
+	}
+	if ctc.Automatic.Enabled && len(ctc.Extraction.Expression) > 0 {
+		return errors.New("Cannot set both 'extraction.expression' and 'automatic.enabled: true' for Content Type.")
+	}
+	if len(ctc.StaticValue) > 0 && len(ctc.Extraction.Expression) > 0 {
+		return errors.New("Cannot set both 'extraction.expression' and 'static_value' for Content Type.")
+	}
+
+	// Validate the one that is populated.
+	if ctc.Automatic.Enabled {
+		return ctc.Automatic.Validate()
+	}
+	if len(ctc.StaticValue) > 0 {
+		return validateContentTypeString(ctx.StaticValue)
+	}
+	if len(ctc.Extraction.Expression) > 0 {
+		return ctc.Extraction.Validate()
+	}
+
+	// If none are populated, we won't record a content type.
+	return nil
+}
+
+
+// Verifies that the configuration is valid.
 func (actc *AutoContentTypeConfig) Validate() error {
-	// TODO: implement
+	// Currently, there is no way to misconfigure this setting.
 	return nil
 }
 
@@ -249,12 +278,28 @@ func (ec *ExtractionConfig) Validate() error {
 
 // Verifies that the configuration is valid.
 func (mlc *MetadataLabelConfig) Validate() error {
-	// TODO: implement
-	return nil
+	if len(mlc.Key) == 0 {
+		return errors.New("Label key cannot be empty.")
+	}
+	return mlc.Value.Validate()
 }
 
 // Verifies that the configuration is valid.
 func (mlvc *MetadataLabelValueConfig) Validate() error {
-	// TODO: implement
+	// Enforce mutual exclusion of oneof options.
+	if len(mlvc.StaticValue) > 0  && len(mlvc.Extraction.Expression) > 0 {
+		return errors.New("Cannot set both 'extraction.expression' and 'static_value' for label values.")
+	}
+
+	// Require that at least one option is set.
+	if len(mlvc.StaticValue) == 0 && len(mlvc.Extraction.Expression) == 0 {
+		return errors.New("Must set either 'static_value' or 'extraction.expression'.")
+	}
+
+	// Validate the expression if present
+	if len(mlvc.Extraction.Expression) {
+		return mlvc.Extraction.Validate()
+	}
+
 	return nil
 }
