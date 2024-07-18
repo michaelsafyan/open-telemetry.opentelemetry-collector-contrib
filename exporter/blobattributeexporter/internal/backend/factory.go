@@ -1,9 +1,9 @@
 // Package "backend" provides utilities for writing to a general blob storage system.
 //
-// The file "factory.go" provides a means of instantiating a BackendRegistry.
+// The file "factory.go" provides a means of instantiating a Registry.
 package backend
 
-// registryImpl is the main implementation of "BackendRegistry".
+// registryImpl is the main implementation of "Registry".
 type registryImpl struct {
 	// schemeToBackend contains a mapping from a URI scheme (e.g.
 	// "gs", "s3", "azblob", etc.) to a corresponding backend.
@@ -11,7 +11,7 @@ type registryImpl struct {
 }
 
 // "GetBackendForUri" implements "BackendRegistry.GetBackendForUri".
-func (r *registryImpl) GetBackendForUri(uri string) (BlobStorageBackend, err) {
+func (r *registryImpl) GetBackendForUri(uri string) (BlobStorageBackend, error) {
 	scheme, _ := strings.SplitN(uri, "://", 1)
 	entry, ok := r.schemeToBackend[scheme]
 	if !ok {
@@ -21,12 +21,12 @@ func (r *registryImpl) GetBackendForUri(uri string) (BlobStorageBackend, err) {
 }
 
 // NewRegistry instantiates a new backend registry.
-func NewRegistry() (BackendRegistry, err) {
+func NewRegistry() (Registry, error) {
 	return &registryImpl{
 		schemeToBackend: map[string]BlobStorageBackend{
 			"azblob": &cdkBlobStorageBackend{},
-			"gs": &cdkBlobStorageBackend{},
-			"s3": &cdkBlobStorageBackend{},
+			"gs":     &cdkBlobStorageBackend{},
+			"s3":     &cdkBlobStorageBackend{},
 		},
-	}
+	}, nil
 }

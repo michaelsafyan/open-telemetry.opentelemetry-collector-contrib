@@ -5,8 +5,13 @@
 // of the "Interpolator" interface that is used in this package.
 package interpolation
 
+import (
+	"fmt"
+	"strings"
+)
+
 // defaultInterpolator is an implementation of "Interpolator"
-type defaultInterpolator struct {}
+type defaultInterpolator struct{}
 
 // Interpolate implements the "Interpolator.Interpolate" interface method.
 func (d *defaultInterpolator) Interpolate(s string, r VariableResolver) (string, error) {
@@ -16,13 +21,13 @@ func (d *defaultInterpolator) Interpolate(s string, r VariableResolver) (string,
 	var openCount int = 0
 	for i < len(s) {
 		// Handle escape sequence "$${"
-		if s[i] == '$' && ((i+1) < len(s)) && (s[i+1] == '$') {
+		if s[i] == '$' && ((i + 1) < len(s)) && (s[i+1] == '$') {
 			i += 2
 			continue
 		}
 
 		// Handle open sequence "${"
-		if s[i] == '$' && ((i+1) < len(s)) && (s[i+1] == '{') {
+		if s[i] == '$' && ((i + 1) < len(s)) && (s[i+1] == '{') {
 			i += 2
 			if openCount == 0 {
 				k.Reset()

@@ -1,4 +1,10 @@
 blobattributeexporter:
+  # The exporter to which to delegate after uploading/exporting blob attributes.
+  exporter:
+    googlecloudpubsub:
+      project: my-project
+      topic: otlp-traces
+  # How to rewrite span attributes.
   traces:
     attributes:
       rules:
@@ -58,6 +64,6 @@ blobattributeexporter:
                 extraction:
                   expression: span.attributes[gen_ai.response.id]
             - key: token_count
-                value:
+              value:
                   extraction:
                     expression: span.attributes[gen_ai.usage.completion_tokens]
