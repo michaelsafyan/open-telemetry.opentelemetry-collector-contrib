@@ -1,8 +1,8 @@
-// Package "blobattributeexporter" provides an exporter that writes
+// Package "blobattributeuploadconnector" provides a connector that writes
 // certain specified attributes to a blob storage backend.
 //
 // The file "config_test.go" validates the "config.go" file.
-package blobattributeexporter
+package blobattributeuploadconnector
 
 import (
 	"go.opentelemetry.io/collector/confmap/confmaptest"

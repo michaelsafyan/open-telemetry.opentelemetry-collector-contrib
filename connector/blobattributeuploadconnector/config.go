@@ -1,19 +1,16 @@
-// Package "blobattributeexporter" provides an exporter that writes
+// Package "blobattributeuploadconnector" provides a connector that writes
 // certain specified attributes to a blob storage backend.
 //
 // The file "config.go" manages interaction with config options.
-package blobattributeexporter
+package blobattributeuploadconnector
 
 import (
 	"errors"
 	"fmt"
 )
 
-// "Config" defines the configuration structure for this exporter.
+// "Config" defines the configuration structure for this connector.
 type Config struct {
-	// The config for the exporter to which to delegate.
-	Exporter map[string]interface{} `mapstructure:"exporter"`
-
 	// Configuration regarding how this should apply to the traces signal.
 	Traces TracesConfig `mapstructure:"traces"`
 

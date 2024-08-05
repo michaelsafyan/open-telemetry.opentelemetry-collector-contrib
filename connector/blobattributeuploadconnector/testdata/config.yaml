@@ -1,9 +1,4 @@
-blobattributeexporter:
-  # The exporter to which to delegate after uploading/exporting blob attributes.
-  exporter:
-    googlecloudpubsub:
-      project: my-project
-      topic: otlp-traces
+blobattributeuploadconnector:
   # How to rewrite span attributes.
   traces:
     attributes:
