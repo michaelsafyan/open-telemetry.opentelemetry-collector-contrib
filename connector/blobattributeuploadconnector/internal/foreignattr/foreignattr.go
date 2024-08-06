@@ -1,3 +1,6 @@
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Package "foreignattr" manages the creation of foreign attributes.
 // Foreign attributes are attributes referencing data in another source.
 package foreignattr
@@ -8,7 +11,6 @@ const typeKey = "type"
 const typeKeyVal = "ForeignAttrRef"
 const uriKey = "uri"
 const contentTypeKey = "content_type"
-
 
 // IsForeignAttrRef tests whether a given value represents a
 // foreign attribute reference.
@@ -27,7 +29,7 @@ func IsForeignAttrRef(v pcommon.Value) bool {
 		return false
 	}
 
-	if typeValue.String() != typeKeyVal {
+	if typeValue.Str() != typeKeyVal {
 		return false
 	}
 

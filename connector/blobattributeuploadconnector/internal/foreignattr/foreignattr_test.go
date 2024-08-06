@@ -1,15 +1,18 @@
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Package "foreignattr" manages the creation of foreign attributes.
 // Foreign attributes are attributes referencing data in another source.
 package foreignattr
 
 import (
-	"testing"
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/pcommon"
+	"testing"
 )
 
 func TestIsForeignAttrRefDoesNotFalsePositive(t *testing.T) {
-	notForeignAttrs := []{
+	notForeignAttrs := []pcommon.Value{
 		pcommon.NewValueEmpty(),
 		pcommon.NewValueStr(""),
 		pcommon.NewValueStr("foo"),
@@ -35,7 +38,10 @@ func getUri(f pcommon.Value) string {
 	if !present {
 		return ""
 	}
-	return value.String()
+	if value.Type() != pcommon.ValueTypeStr {
+		return ""
+	}
+	return value.Str()
 }
 
 func hasContentType(f pcommon.Value) bool {
@@ -50,24 +56,25 @@ func getContentType(f pcommon.Value) string {
 	if !present {
 		return ""
 	}
-	return value.String()
+	if value.Type() != pcommon.ValueTypeStr {
+		return ""
+	}
+	return value.Str()
 }
-
 
 func TestFromUri(t *testing.T) {
 	f := FromUri("some://uri/string")
-	assert.True(t, IsForeignAttrRef(v))
+	assert.True(t, IsForeignAttrRef(f))
 	assert.Equal(t, f.Type(), pcommon.ValueTypeMap)
 	assert.Equal(t, getUri(f), "some://uri/string")
-	assert.False(t, hasContentType(v))
+	assert.False(t, hasContentType(f))
 }
-
 
 func TestFromUriWithContentType(t *testing.T) {
 	f := FromUriWithContentType("some://uri/string", "the/type")
-	assert.True(t, IsForeignAttrRef(v))
+	assert.True(t, IsForeignAttrRef(f))
 	assert.Equal(t, f.Type(), pcommon.ValueTypeMap)
 	assert.Equal(t, getUri(f), "some://uri/string")
-	assert.True(t, hasContentType(v))
+	assert.True(t, hasContentType(f))
 	assert.Equal(t, getContentType(f), "the/type")
 }

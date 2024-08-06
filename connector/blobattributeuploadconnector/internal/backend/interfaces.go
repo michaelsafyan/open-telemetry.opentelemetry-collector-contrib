@@ -1,3 +1,6 @@
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Package "backend" provides utilities for writing to a general blob storage system.
 //
 // The file "interfaces.go" defines the relevant interfaces of this subpackage.

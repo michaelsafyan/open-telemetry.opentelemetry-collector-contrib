@@ -1,3 +1,6 @@
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Package "backend" provides utilities for writing to a general blob storage system.
 //
 // The "cdk.go" file provides implementations supported via "Cloud Development Kit":
@@ -52,5 +55,5 @@ func (c *cdkBlobStorageBackend) Upload(ctx context.Context, uri string, data []b
 		Metadata: metadata.Labels(),
 	}
 
-	return blob.WriteAll(ctx, path, data, opts)
+	return bucket.WriteAll(ctx, path, data, opts)
 }

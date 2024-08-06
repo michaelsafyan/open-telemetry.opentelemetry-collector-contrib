@@ -1,3 +1,6 @@
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Package "contenttype" provides utilities for guessing/inferring content types.
 package contenttype
 
