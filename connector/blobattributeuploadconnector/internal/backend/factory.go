@@ -19,8 +19,8 @@ type registryImpl struct {
 }
 
 // "GetBackendForUri" implements "BackendRegistry.GetBackendForUri".
-func (r *registryImpl) GetBackendForUri(uri string) (BlobStorageBackend, error) {
-	components := strings.SplitN(uri, "://", 1)
+func (r *registryImpl) GetBackendForURI(uri string) (BlobStorageBackend, error) {
+	components := strings.SplitN(uri, "://", 2)
 	if len(components) != 2 {
 		return nil, fmt.Errorf("Invalid URI; missing '://' from %v", uri)
 	}

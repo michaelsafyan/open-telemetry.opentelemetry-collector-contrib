@@ -29,6 +29,6 @@ type BlobStorageBackend interface {
 
 // Registry maps URIs (typically based on prefix) to an associated backend.
 type Registry interface {
-	// GetBackendForUri returns the backend for the specified URI if available.
-	GetBackendForUri(uri string) (BlobStorageBackend, error)
+	// GetBackendForURI returns the backend for the specified URI if available.
+	GetBackendForURI(uri string) (BlobStorageBackend, error)
 }
