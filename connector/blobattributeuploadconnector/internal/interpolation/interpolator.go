@@ -16,8 +16,8 @@ import (
 // defaultInterpolator is an implementation of "Interpolator"
 type defaultInterpolator struct{}
 
-// Interpolate implements the "Interpolator.Interpolate" interface method.
-func (d *defaultInterpolator) Interpolate(s string, r VariableResolver) (string, error) {
+// Helper that uses a "VariableResolver" to do the interpolation.
+func (d *defaultInterpolator) interpolateInternal(s string, r VariableResolver) (string, error) {
 	var b strings.Builder
 	var k strings.Builder
 	var i int = 0
@@ -77,6 +77,12 @@ func (d *defaultInterpolator) Interpolate(s string, r VariableResolver) (string,
 	}
 
 	return b.String(), nil
+}
+
+// Interpolate implements the "Interpolator.Interpolate" interface method.
+func (d *defaultInterpolator) Interpolate(s string, ic InterpolationContext) (string, error) {
+	r := NewResolver(ic)
+	return d.interpolateInternal(s, r)
 }
 
 // New provides an interpolator instance.

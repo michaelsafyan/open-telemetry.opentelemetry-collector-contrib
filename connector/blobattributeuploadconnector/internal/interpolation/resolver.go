@@ -9,6 +9,7 @@
 package interpolation
 
 import (
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -19,18 +20,21 @@ type resolverImpl struct {
 
 // Identifies a token in the variable resolution expression
 type tokenType int
+
 const (
-	TOKEN_TYPE_INVALID tokenType = iota,
-	IDENTIFIER,
-	DOT,
-	STRING_LITERAL,
-	INTEGER_LITERAL,
-	LEFT_BRACE,
-	RIGHT_BRACE,
-	LEFT_PAREN,
-	RIGHT_PAREN,
-	COMMA,
-	EOF
+	// Enum values for different kinds of tokens used
+	// in the process of interpolating strings dynamically.
+	TokenTypeInvalid tokenType = iota,
+		IDENTIFIER,
+		DOT,
+		STRING_LITERAL,
+		INTEGER_LITERAL,
+		LEFT_BRACE,
+		RIGHT_BRACE,
+		LEFT_PAREN,
+		RIGHT_PAREN,
+		COMMA,
+		EOF
 )
 
 // Identifies a single token in the variable resolution expression
@@ -38,6 +42,7 @@ type token struct {
 	t tokenType
 	v string
 }
+
 func (t *token) is(tt tokenType) bool {
 	return t.t == tt
 }
@@ -54,12 +59,12 @@ type tokenReader interface {
 
 // Lexer for the variable resolution expression
 type variableResolutionExprLexer struct {
-	exprString string
-	remainingString string
+	exprString       string
+	remainingString  string
 	currentByteIndex int
 	currentRuneIndex int
-	nextToken *token
-	nextError error
+	nextToken        *token
+	nextError        error
 }
 
 func (vrel *variableResolutionExprLexer) more() bool {
@@ -67,7 +72,7 @@ func (vrel *variableResolutionExprLexer) more() bool {
 }
 
 func (vrel *variableResolutionExprLexer) peekRune() rune {
-	if (len(vrel.remainingString) == 0) {
+	if len(vrel.remainingString) == 0 {
 		return ' '
 	}
 
@@ -77,7 +82,7 @@ func (vrel *variableResolutionExprLexer) peekRune() rune {
 }
 
 func (vrel *variableResolutionExprLexer) nextRune() rune {
-	if (len(vrel.remainingString) == 0) {
+	if len(vrel.remainingString) == 0 {
 		return ' '
 	}
 
@@ -91,8 +96,8 @@ func (vrel *variableResolutionExprLexer) nextRune() rune {
 
 func (vrel *variableResolutionExprLexer) skipWhiteSpace() {
 	for len(vrel.remainingString) > 0 &&
-	    unicode.IsSpace(vrel.peekRune()) {
-	  vrel.nextRune()
+		unicode.IsSpace(vrel.peekRune()) {
+		vrel.nextRune()
 	}
 }
 
@@ -108,26 +113,33 @@ func (vrel *variableResolutionExprLexer) consumeQuotedStringLiteral() (*token, e
 }
 
 func (vrel *variableResolutionExprLexer) singleRuneOperatorToTokenType(r rune) tokenType {
-	switch (r) {
-		case '.': return DOT
-		case '[': return LEFT_BRACE
-		case ']': return RIGHT_BRACE
-		case '(': return LEFT_PAREN
-		case ')': return RIGHT_PAREN
-		case ',': return COMMA
-		default: return TOKEN_TYPE_INVALID 
+	switch r {
+	case '.':
+		return DOT
+	case '[':
+		return LEFT_BRACE
+	case ']':
+		return RIGHT_BRACE
+	case '(':
+		return LEFT_PAREN
+	case ')':
+		return RIGHT_PAREN
+	case ',':
+		return COMMA
+	default:
+		return TokenTypeInvalid
 	}
 }
 
 func (vrel *variableResolutionExprLexer) isSingleRuneOperator(r rune) bool {
 	tt := vrel.singleRuneOperatorToTokenType(r)
-	return tt != TOKEN_TYPE_INVALID
+	return tt != TokenTypeInvalid
 }
 
 func (vrel *variableResolutionExprLexer) consumeSingleRuneOperator() (*token, error) {
 	opRune := vrel.nextRune()
 	tt := vrel.singleRuneOperatorToTokenType(opRune)
-	if tt == TOKEN_TYPE_INVALID {
+	if tt == TokenTypeInvalid {
 		return nil, errors.New("expected valid operator rune")
 	}
 	buffer := utf8.AppendRune(make([]byte), opRune)
@@ -139,23 +151,87 @@ func (vrel *variableResolutionExprLexer) consumeSingleRuneOperator() (*token, er
 }
 
 func (vrel *variableResolutionExprLexer) isIdentifierStart(r rune) bool {
+	return unicode.IsLetter(r) || (r == '_')
 }
 
 func (vrel *variableResolutionExprLexer) isIdentifierContent(r rune) bool {
+	return vrel.isIdentifierStart(r) || unicode.IsDigit(r)
 }
 
 func (vrel *variableResolutionExprLexer) consumeIdentifier() (*token, error) {
+	var builder strings.Builder
+	firstRune, firstRuneErr := vrel.peekRune()
+	if firstRuneErr != nil {
+		return nil, firstRuneErr
+	}
+	if !vrel.isIdentifierStart(firstRune) {
+		return nil, fmt.Errorf("Not an identifier start: %v", firstRune)
+	}
+	builder.WriteRune(firstRune)
+	for vrel.more() {
+		peekRune, err := vrel.peekRune()
+		if err != nil {
+			return nil, err
+		}
+		if !vrel.isIdentifierContent(peekRune) {
+			break
+		}
 
+		nextRune, nextRuneErr := vrel.nextRune()
+		if nextRuneErr != nil {
+			return nil, nextRuneErr
+		}
+		builder.WriteRune(nextRune)
+	}
+
+	content := builder.String()
+	return &token{
+		t: IDENTIFIER,
+		v: content,
+	}, nil
 }
 
 func (vrel *variableResolutionExprLexer) isIntegerStart(r rune) bool {
+	// TODO: maybe allow "+" and "-" at the start
+	// TODO: maybe allow "0x", "0b", etc.
+	return unicode.IsDigit(r)
 }
 
 func (vrel *variableResolutionExprLexer) isIntegerContent(r rune) bool {
+	return unicode.IsDigit(r)
 }
 
 func (vrel *variableResolutionExprLexer) consumeInteger() (*token, error) {
+	var builder strings.Builder
+	firstRune, firstRuneErr := vrel.peekRune()
+	if firstRuneErr != nil {
+		return nil, firstRuneErr
+	}
+	if !vrel.isIntegerStart(firstRune) {
+		return nil, fmt.Errorf("Not an integer start: %v", firstRune)
+	}
+	builder.WriteRune(firstRune)
+	for vrel.more() {
+		peekRune, err := vrel.peekRune()
+		if err != nil {
+			return nil, err
+		}
+		if !vrel.isIntegerContent(peekRune) {
+			break
+		}
 
+		nextRune, nextRuneErr := vrel.nextRune()
+		if nextRuneErr != nil {
+			return nil, nextRuneErr
+		}
+		builder.WriteRune(nextRune)
+	}
+
+	content := builder.String()
+	return &token{
+		t: INTEGER_LITERAL,
+		v: content,
+	}, nil
 }
 
 func (vrel *variableResolutionExprLexer) peek() (token, error) {
@@ -164,7 +240,7 @@ func (vrel *variableResolutionExprLexer) peek() (token, error) {
 	}
 
 	vrel.skipWhiteSpace()
-	if (len(vrel.remainingString) == 0) {
+	if len(vrel.remainingString) == 0 {
 		vrel.nextToken = &token{
 			t: EOF,
 			v: "",
@@ -207,27 +283,34 @@ func (vrel *variableResolutionExprLexer) next() (token, error) {
 
 func newLexer(s string) *variableResolutionExprLexer {
 	return &variableResolutionExprLexer{
-		exprString: s,
-		remainingString: s,
+		exprString:       s,
+		remainingString:  s,
 		currentByteIndex: 0,
 		currentRuneIndex: 0,
-		nextToken: nil,
-		nextError: nil,
+		nextToken:        nil,
+		nextError:        nil,
 	}
 }
 
 type subLexer struct {
-	reader *tokenReader
-	isEnd func(t *token)bool
+	reader     *tokenReader
+	braceCount int
+	parenCount int
 }
 
 func (sl *subLexer) more() bool {
-	return sl.reader.more() && !sl.isEnd(sl.reader.peek())
+	return sl.reader.more() && ((sl.braceCount > 0) || (sl.parenCount > 0))
 }
 
 func (sl *subLexer) peek() (*token, error) {
 	if sl.more() {
 		return sl.reader.peek()
+	}
+	if sl.braceCount != 0 {
+		return nil, errors.New("Mismatched braces")
+	}
+	if sl.parenCount != 0 {
+		return nil, errors.New("Mismatched parens")
 	}
 	return &token{
 		t: EOF,
@@ -236,62 +319,134 @@ func (sl *subLexer) peek() (*token, error) {
 }
 
 func (sl *subLexer) next() (*token, error) {
-	if sl.more() {
-		return sl.reader.next()
-	}
-	return &token{
-		t: EOF,
-		v: "",
-	}, nil
-}
+	result, err := sl.peek()
 
-func untilType(r *tokenReader, tt tokenType) *tokenReader {
-	return &subLexer{
-		reader: r,
-		func(t *token) bool { return t.is(tt) },
+	if sl.more() {
+		nextToken, err := sl.reader.next()
+		if err != nil {
+			return nil, err
+		}
+		if nextToken.is(LEFT_BRACE) {
+			sl.braceCount += 1
+		} else if nextToken.is(RIGHT_BRACE) {
+			sl.braceCount -= 1
+		} else if nextToken.is(LEFT_PAREN) {
+			sl.parenCount += 1
+		} else if nextToken.is(RIGHT_PAREN) {
+			sl.parenCount -= 1
+		}
 	}
+
+	return result, err
 }
 
 // Instantiates a new resolver.
 func NewResolver(ctx InterpolationContext) VariableResolver {
-	return &resolverImpl {
+	return &resolverImpl{
 		ctx: ctx,
 	}
 }
 
 func (r *resolverImpl) resolveInternal(l *tokenReader) (InterpolationContext, error) {
-	var builder strings.Builder
 	var currentContext = r.ctx
 	var t *token = nil
 	var e error = nil
-	for t, e = l.next() ; e == nil && !t.is(EOF) {
-		pt, _ = l.peek()
-		if t.is(IDENTIFIER) {
-			if pt != nil && pt.is(LEFT_PAREN) {
-			  // This use of an identifier is likely a function invocation
-			  
-			  // TODO: handle this case
-			  return "", errors.New("function calls not yet implemented")
-			} else if currentContext.ContainsField(t.value()) {
-			  // This probably is following a "." and is a property lookup.
-			  currentContext, e = currentContext.GetField(t.value())
-			  builder.WriteString(t.value())
-			  continue
-			} else if currentContext.ContainsValue(t.value()) {
-			  // This probably is followinga "." but is a map lookup using property syntax.
-			  currentContext, e = currentContext.GetValue(t.value())
-			  builder.WriteString(t.value())
-			  continue
-			}
-		} else if t.is(DOT) && (pt.is(IDENTIFIER) || pt.is(STRING_LITERAL)) {
-			continue
-		} else if t.is(LEFT_BRACE) (pt.is(IDENTIFIER) || pt.is(STRING_LITERAL)) {
-			// Map property lookup case
 
-		} else if t.is(LEFT_BRACE) (pt.is(INTEGER_LITERAL)) {
-			// Array/list lookup case
-		} 
+	for l.more() {
+		t, e = l.peek()
+		if e != nil {
+			return nil, e
+		}
+
+		if t.is(DOT) {
+			l.next()
+			t, e = l.peek()
+			if !t.is(IDENTIFIER) && !t.is(STRING_LITERAL) {
+				return nil, fmt.Errorf("Expected identifier or string literal after '.'")
+			}
+		}
+
+		if t.is(LEFT_BRACE) {
+			currentContext, e = r.resolveArrayOrMapElement(currentContext, l)
+		} else if t.is(IDENTIFIER) || t.is(STRING_LITERAL) {
+			currentContext, e = r.resolveElement(currentContext, l)
+		} else {
+			return nil, fmt.Errorf("Unexpected token: %v", t.v)
+		}
 	}
+
+	return currentContext, nil
+}
+
+func (r *resolverImpl) resolveArrayOrMapElement(
+	currentContext InterpolationContext, l *tokenReader) (InterpolationContext, error) {
+	lbrace, err := l.next()
+	if err != nil {
+		return nil, err
+	}
+	if !lbrace.is(LEFT_BRACE) {
+		return nil, errors.New("Expected [")
+	}
+
+	sl := &subLexer{reader: l, braceCount: 1}
+	elementRef, elementRefErr := r.resolveInternal(sl)
+	if elementRefErr != nil {
+		return nil, elementRefErr
+	}
+
+	if !elementRef.IsScalar() {
+		return nil, errors.New("Cannot use a non-scalar value as a map or array element")
+	}
+
+	elementAsInt, intConversionErr := elementRef.ConvertToInt()
+	if intConversionErr == nil && currentContext.ContainsIndex(elementAsInt) {
+		return currentContext.GetIndex(elementAsInt)
+	}
+
+	elementAsStr, strConversionErr := elementRef.ConvertToString()
+	if strConversionErr != nil {
+		return nil, strConversionErr
+	}
+
+	if currentContext.ContainsKey(elementAsStr) {
+		return currentContext.GetValue(elementAsStr)
+	}
+
+	if currentContext.ContainsField(elementAsStr) {
+		return currentContext.GetField(elementAsStr)
+	}
+
+	return nil, fmt.Errorf("No such element: %v", elementAsStr)
+}
+
+func (r *resolverImpl) resolveElement(
+	currentContext InterpolationContext, l *tokenReader) (InterpolationContext, error) {
+	fieldOrMapElement, err := l.next()
+	if !fieldOrMapElement.is(IDENTIFIER) && !fieldOrMapElement.is(STRING_LITERAL) {
+		return nil, errors.New("Expected identifier or string literal.")
+	}
+
+	elementAsStr, strConversionErr := fieldOrMapElement.ConvertToString()
+	if strConversionErr != nil {
+		return nil, strConversionErr
+	}
+
+	if currentContext.ContainsField(elementAsStr) {
+		return currentContext.GetField(elementAsStr)
+	}
+
+	if currentContext.IsMap() {
+		if currentContext.ContainsKey(elementAsStr) {
+			return currentContext.GetValue(elementAsStr)
+		}
+
+		pluralVariant := string(utf8.AppendRune([]byte(elementAsStr), 's'))
+		if currentContext.ContainsKey(pluralVariant) {
+			return currentContext.GetValue(pluralVariant)
+		}
+	}
+
+	return nil, fmt.Errorf("No such element: %v", elementAsStr)
 }
 
 // Attempts to the resolve the variable in a fairly general way
