@@ -4,7 +4,11 @@
 // Package "contenttype" provides utilities for guessing/inferring content types.
 package contenttype
 
-import "net/http"
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+)
 
 // DeduceContentType attempts to deduce the content type of the given information.
 //
@@ -15,10 +19,17 @@ import "net/http"
 // Returns:
 //  (MIME type, error): the inferred content type or an error
 func DeduceContentType(uri string, data []byte) (string, error) {
-	// This additional wrapping layer around "net/http" exists to
-	// allow for future evolution of the content detection (such
-	// as to use alternative dependencies or to add detection that
-	// is more fine-grained for certain observability use cases).
-	contentType := http.DetectContentType(data)
-	return contentType, nil
+	detectedContentType := strings.TrimSpace(strings.TrimRight(http.DetectContentType(data), ";"))
+
+	if detectedContentType == "text/plain" {
+		trimmedContent := strings.TrimSpace(string(data))
+		if strings.HasPrefix(trimmedContent, "{") && strings.HasSuffix(trimmedContent, "}") && json.Valid(data) {
+			if strings.HasSuffix(uri, ".yaml") {
+				return "application/yaml", nil
+			}
+			return "application/json", nil
+		}
+	}
+
+	return detectedContentType, nil
 }
