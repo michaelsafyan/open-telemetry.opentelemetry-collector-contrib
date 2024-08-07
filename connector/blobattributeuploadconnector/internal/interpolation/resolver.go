@@ -13,7 +13,7 @@ import (
 )
 
 // Implementation of "VariableResolver"
-type resolverImpl {
+type resolverImpl struct {
 	ctx InterpolationContext
 }
 
@@ -97,7 +97,7 @@ func (vrel *variableResolutionExprLexer) skipWhiteSpace() {
 }
 
 func (vrel *variableResolutionExprLexer) isQuoteMark(r rune) bool {
-	return r == '\'' || r == '\"' || r == '`'
+	return r == '\'' || r == '"' || r == '`'
 }
 
 func (vrel *variableResolutionExprLexer) consumeQuotedStringLiteral() (*token, error) {
@@ -130,11 +130,11 @@ func (vrel *variableResolutionExprLexer) consumeSingleRuneOperator() (*token, er
 	if tt == TOKEN_TYPE_INVALID {
 		return nil, errors.New("expected valid operator rune")
 	}
-	buffer := utf8.AppendRune(byte[]{}, opRune)
+	buffer := utf8.AppendRune(make([]byte), opRune)
 	bufferStr := string(buffer[:])
 	return &token{
 		t: tt,
-		v: bufferStr
+		v: bufferStr,
 	}, nil
 }
 
@@ -167,7 +167,7 @@ func (vrel *variableResolutionExprLexer) peek() (token, error) {
 	if (len(vrel.remainingString) == 0) {
 		vrel.nextToken = &token{
 			t: EOF,
-			v: ""
+			v: "",
 		}
 		return vrel.nextToken, nil
 	}
@@ -212,7 +212,7 @@ func newLexer(s string) *variableResolutionExprLexer {
 		currentByteIndex: 0,
 		currentRuneIndex: 0,
 		nextToken: nil,
-		nextError: nil
+		nextError: nil,
 	}
 }
 
@@ -231,7 +231,7 @@ func (sl *subLexer) peek() (*token, error) {
 	}
 	return &token{
 		t: EOF,
-		v: ""
+		v: "",
 	}, nil
 }
 
@@ -241,14 +241,14 @@ func (sl *subLexer) next() (*token, error) {
 	}
 	return &token{
 		t: EOF,
-		v: ""
+		v: "",
 	}, nil
 }
 
 func untilType(r *tokenReader, tt tokenType) *tokenReader {
 	return &subLexer{
 		reader: r,
-		func(t *token) bool { return t.is(tt) }
+		func(t *token) bool { return t.is(tt) },
 	}
 }
 

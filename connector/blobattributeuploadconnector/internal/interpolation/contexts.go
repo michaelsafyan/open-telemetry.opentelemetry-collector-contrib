@@ -240,27 +240,27 @@ type osEnvVariableContext struct {
 }
 
 // osEnvVariableContext
-func (c *osEnvVariableContext) IsScalar() bool                   { return true }
-func (c *osEnvVariableContext) IsNull() bool                     {
- _, present := os.LookupEnv(c.key)
- return !present
+func (c *osEnvVariableContext) IsScalar() bool { return true }
+func (c *osEnvVariableContext) IsNull() bool {
+	_, present := os.LookupEnv(c.key)
+	return !present
 }
 
-func (c *osEnvVariableContext) IsObject() bool                   { return false }
+func (c *osEnvVariableContext) IsObject() bool { return false }
 
-func (c *osEnvVariableContext) IsMap() bool                      {
+func (c *osEnvVariableContext) IsMap() bool {
 	// TODO: maybe say yes for keys that are known to contain map-like data
 	return false
 }
 
-func (c *osEnvVariableContext) IsArray() bool                    {
+func (c *osEnvVariableContext) IsArray() bool {
 	// TODO: maybe say yes for keys that are known to contain array-like data (e.g. "PATH")
 	return false
 }
 
-func (c *osEnvVariableContext) ContainsField(field string) bool  { return false }
-func (c *osEnvVariableContext) ContainsKey(key string) bool      { return false }
-func (c *osEnvVariableContext) ContainsIndex(index int) bool     { return false }
+func (c *osEnvVariableContext) ContainsField(field string) bool { return false }
+func (c *osEnvVariableContext) ContainsKey(key string) bool     { return false }
+func (c *osEnvVariableContext) ContainsIndex(index int) bool    { return false }
 
 func (c *osEnvVariableContext) ConvertToString() (string, error) {
 	return os.GetEnv(c.key), nil
@@ -268,18 +268,18 @@ func (c *osEnvVariableContext) ConvertToString() (string, error) {
 
 func stringToBool(s string) (bool, error) {
 	toCompare := strings.ToLower(s)
-	falseValues := {
+	falseValues := []string{
 		"",
 		"0",
 		"f",
 		"false",
-		"no"
+		"no",
 	}
-	trueValues := {
+	trueValues := []string{
 		"1",
 		"t",
 		"true",
-		"yes"
+		"yes",
 	}
 	for fv := range falseValues {
 		if toCompare == fv {
@@ -294,12 +294,12 @@ func stringToBool(s string) (bool, error) {
 	return nil, fmt.Errorf("Cannot convert to bool: %v", s)
 }
 
-func (c *osEnvVariableContext) ConvertToBool() (bool, error)     {
+func (c *osEnvVariableContext) ConvertToBool() (bool, error) {
 	value := os.GetEnv(c.key)
 	return stringToBool(value)
 }
 
-func (c *osEnvVariableContext) ConvertToInt() (int, error)       {
+func (c *osEnvVariableContext) ConvertToInt() (int, error) {
 	value := os.GetEnv(c.key)
 	if value == "" {
 		return 0, nil
@@ -307,11 +307,11 @@ func (c *osEnvVariableContext) ConvertToInt() (int, error)       {
 	return strconv.Atoi(value)
 }
 
-func (c *osEnvVariableContext) Len() int                         {
+func (c *osEnvVariableContext) Len() int {
 	// TODO: special handling for array-like or map-like env keys?
 	// For example, should this split "PATH" to give a true count?
 
-	return 1  // 1 object contained, itself
+	return 1 // 1 object contained, itself
 }
 
 func (c *osEnvVariableContext) GetField(name string) (InterpolationContext, error) {
@@ -329,33 +329,33 @@ func (c *osEnvVariableContext) GetIndex(index int) (InterpolationContext, error)
 }
 
 // osEnvContext
-func (c *osEnvContext) IsScalar() bool                   { return false }
-func (c *osEnvContext) IsNull() bool                     { return false }
-func (c *osEnvContext) IsObject() bool                   { return false }
-func (c *osEnvContext) IsMap() bool                      { return true }
-func (c *osEnvContext) IsArray() bool                    { return false }
+func (c *osEnvContext) IsScalar() bool { return false }
+func (c *osEnvContext) IsNull() bool   { return false }
+func (c *osEnvContext) IsObject() bool { return false }
+func (c *osEnvContext) IsMap() bool    { return true }
+func (c *osEnvContext) IsArray() bool  { return false }
 
-func (c *osEnvContext) ContainsField(field string) bool  { return false }
-func (c *osEnvContext) ContainsKey(key string) bool      {
+func (c *osEnvContext) ContainsField(field string) bool { return false }
+func (c *osEnvContext) ContainsKey(key string) bool {
 	_, present := os.LookupEnv(key)
 	return present
 }
 
-func (c *osEnvContext) ContainsIndex(index int) bool     { return false }
+func (c *osEnvContext) ContainsIndex(index int) bool { return false }
 
 func (c *osEnvContext) ConvertToString() (string, error) {
 	return strings.Join(os.Environ(), "\n"), nil
 }
 
-func (c *osEnvContext) ConvertToBool() (bool, error)     {
+func (c *osEnvContext) ConvertToBool() (bool, error) {
 	return false, errors.New("Cannot convert env to bool.")
 }
 
-func (c *osEnvContext) ConvertToInt() (int, error)       {
+func (c *osEnvContext) ConvertToInt() (int, error) {
 	return 0, errors.New("Cannot convert env to int.")
 }
 
-func (c *osEnvContext) Len() int                         {
+func (c *osEnvContext) Len() int {
 	return len(os.Environ())
 }
 
@@ -363,7 +363,7 @@ func (c *osEnvContext) GetField(name string) (InterpolationContext, error) {
 	return nil, fmt.Errorf("No such field: %v", name)
 }
 func (c *osEnvContext) GetValue(name string) (InterpolationContext, error) {
-	return &osEnvVariableContext{ key: name }, nil
+	return &osEnvVariableContext{key: name}, nil
 }
 func (c *osEnvContext) GetIndex(index int) (InterpolationContext, error) {
 	return nil, fmt.Errorf("No such index: %v", index)
