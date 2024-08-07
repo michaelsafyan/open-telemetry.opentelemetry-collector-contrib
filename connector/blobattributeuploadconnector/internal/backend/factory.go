@@ -20,7 +20,11 @@ type registryImpl struct {
 
 // "GetBackendForUri" implements "BackendRegistry.GetBackendForUri".
 func (r *registryImpl) GetBackendForUri(uri string) (BlobStorageBackend, error) {
-	scheme, _ := strings.SplitN(uri, "://", 1)
+	components := strings.SplitN(uri, "://", 1)
+	if len(components) != 2 {
+		return nil, fmt.Errorf("Invalid URI; missing '://' from %v", uri)
+	}
+	scheme := components[0]
 	entry, ok := r.schemeToBackend[scheme]
 	if !ok {
 		return nil, fmt.Errorf("URI %v not recognized; no implementation registered for scheme %v", uri, scheme)

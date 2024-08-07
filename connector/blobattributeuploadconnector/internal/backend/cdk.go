@@ -43,7 +43,7 @@ func (c *cdkBlobStorageBackend) Upload(ctx context.Context, uri string, data []b
 	}
 	defer bucket.Close()
 
-	opts := blob.WriterOptions{
+	opts := &blob.WriterOptions{
 		// The content type supplied in the upload metadata.
 		ContentType: metadata.ContentType(),
 
