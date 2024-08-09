@@ -8,6 +8,7 @@
 package blobattributeuploadconnector
 
 import (
+	"fmt"
 	"context"
 	"hash/maphash"
 
@@ -16,20 +17,27 @@ import (
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/connector"
 	"go.opentelemetry.io/collector/consumer"
+	"go.opentelemetry.io/collector/pdata/ptrace"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 
+	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/ottl"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/ottl/contexts/ottlspan"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/ottl/contexts/ottlspanevent"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/ottl/ottlfuncs"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobattributeuploadconnector/internal/backend"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobattributeuploadconnector/internal/contenttype"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobattributeuploadconnector/internal/foreignattr"
 )
 
-type passThroughTracesConnector {
+type passThroughTracesConnector struct {
 	nextConsumer consumer.Traces
 	component.StartFunc
 	component.ShutdownFunc
 }
 
 func (c *passThroughTracesConnector) ConsumeTraces(ctx context.Context, td ptrace.Traces) error {
-	return nextConsumer.ConsumeTraces(ctx, td)
+	return c.nextConsumer.ConsumeTraces(ctx, td)
 }
 
 func (c *passThroughTracesConnector) Capabilities() consumer.Capabilities {
@@ -66,7 +74,7 @@ type attributeRuleMap struct {
 
 func newAttributeRuleMap() *attributeRuleMap {
 	return &attributeRuleMap{
-		attributeNameToRule: make(map[string]*AttributeConfigRule)
+		attributeNameToRule: make(map[string]*AttributeConfigRule),
 	}
 }
 
@@ -107,16 +115,16 @@ func (ear *eventAttributeRules) add(secg *SpanEventsConfigGroup) error {
 		return nil
 	}
 
-	var mapsToUpdate = make([]*attributeRuleMap)
+	var mapsToUpdate = []*attributeRuleMap{}
 	if secg.EventName == nil || secg.EventName.MatchAll {
 		mapsToUpdate = append(mapsToUpdate, ear.allEvents) 
 	} else {
-		for _, name := range ear.EventName.MatchIfAnyEqualTo {
+		for _, name := range secg.EventName.MatchIfAnyEqualTo {
 			existing, present := ear.eventNameToRuleMap[name]
 			if present {
 				mapsToUpdate = append(mapsToUpdate, existing)
 			} else {
-				newMap = newAttributeRuleMap()
+				newMap := newAttributeRuleMap()
 				ear.eventNameToRuleMap[name] = newMap
 				mapsToUpdate = append(mapsToUpdate, existing)
 			}
@@ -124,7 +132,7 @@ func (ear *eventAttributeRules) add(secg *SpanEventsConfigGroup) error {
 	}
 
 	for _, rule := range secg.Attributes.Rule {
-		for _, m := mapsToUpdate {
+		for _, m := range mapsToUpdate {
 			if err := m.add(rule) ; err != nil {
 				return err
 			}
@@ -134,7 +142,7 @@ func (ear *eventAttributeRules) add(secg *SpanEventsConfigGroup) error {
 	return nil
 }
 
-type applicableEventAttributeRules {
+type applicableEventAttributeRules struct {
 	values []*attributeRuleMap
 }
 
@@ -144,13 +152,13 @@ func (ear *eventAttributeRules) get(eventName string) *applicableEventAttributeR
 		return &applicableEventAttributeRules{
 			values: []*attributeRuleMap{
 				existing,
-				ear.allEvents
-			}
+				ear.allEvents,
+			},
 		}
 	}
 
 	return &applicableEventAttributeRules{
-		values: []*attributeRuleMap{ear.allEvents}
+		values: []*attributeRuleMap{ear.allEvents},
 	}
 }
 
@@ -176,7 +184,7 @@ type matchedAttributeList struct {
 
 func newMatchedAttributeList() *matchedAttributeList {
 	return &matchedAttributeList{
-		items: make([]*matchedAttribute)
+		items: []*matchedAttribute{},
 	}
 }
 
@@ -497,7 +505,7 @@ func (tracesImpl *tracesToTracesImpl) consumeSpanEvent(ctx context.Context, se *
 		return true
 	})
 
-	for _, entry := toProcess.items {
+	for _, entry := range toProcess.items {
 		newVal, err := tracesImpl.processSingleMatchedSpanEventAttribute(ctx, se, entry)
 		if err != nil {
 			return err
@@ -585,7 +593,7 @@ func (tracesImpl *tracesToTracesImpl) consumeSpanContent(ctx context.Context, s 
 		return true
 	})
 
-	for _, entry := toProcess.items {
+	for _, entry := range toProcess.items {
 		newVal, err := tracesImpl.processSingleMatchedSpanAttribute(ctx, s, entry)
 		if err != nil {
 			return err

@@ -13,21 +13,19 @@ import (
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/connector"
 	"go.opentelemetry.io/collector/consumer"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobattributeuploadconnector/internal/metadata"
 )
 
-const (
-	typeStr = "blobattributeuploadconnector"
-)
-
-func createDefaultConfig() *component.Config {
+func createDefaultConfig() component.Config {
 	return &Config{}
 }
 
 func NewFactory() connector.Factory {
 	return connector.NewFactory(
-		typeStr,
+		metadata.Type,
 		createDefaultConfig,
 		connector.WithTracesToTraces(
 			createTracesToTracesConnector,
-			component.StabilityLevelAlpha))
+			metadata.TracesToTracesStability))
 }
