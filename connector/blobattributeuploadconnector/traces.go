@@ -226,18 +226,54 @@ func (tracesImpl *tracesToTracesImpl) shouldSampleSpanAttribute(s *spanReference
 	return tracesImpl.shouldSampleAttributeInTrace(m, s.traceID()) 
 }
 
+func (tracesImpl *tracesToTracesImpl) interpolateSpanEvent(
+	ctx context.Context,
+	pattern string,
+	se *spanEventReference) (string, error) {
+}
+
+func (tracesImpl *tracesToTracesImpl) interpolateSpan(
+	ctx context.Context,
+	pattern string,
+	s *spanReference) (string, error) {
+}
+
 func (tracesImpl *tracesToTracesImpl) computeDestinationUriForSpanEvent(
 	ctx context.Context,
 	se *spanEventReference,
     m *matchedAttribute) (string, error) {
-  // TODO: ...
+  if m.rule.Action == nil {
+	  return "", fmt.Errorf("missing 'action' in rule %v", m.rule.Name)
+  }
+  if m.rule.Action.Upload == nil {
+	return "", fmt.Errorf("missing 'action.upload' in rule %v", m.rule.Name)
+  }
+
+  destinationUriPattern := m.rule.action.Upload.DestinationUri
+  if len(destinationUriPattern) == 0 {
+	return "", fmt.Errorf("empty 'action.upload.destination_uri' in rule %v", m.rule.Name)
+  }
+
+  return tracesImpl.interpolateSpanEvent(ctx, destinationUriPattern, se)
 }
 
 func (tracesImpl *tracesToTracesImpl) computeDestinationUriForSpan(
 	ctx context.Context,
 	s *spanReference,
     m *matchedAttribute) (string, error) {
-  // TODO: ...
+ if m.rule.Action == nil {
+	return "", fmt.Errorf("missing 'action' in rule %v", m.rule.Name)
+ }
+ if m.rule.Action.Upload == nil {
+	return "", fmt.Errorf("missing 'action.upload' in rule %v", m.rule.Name)
+ }
+
+ destinationUriPattern := m.rule.action.Upload.DestinationUri
+ if len(destinationUriPattern) == 0 {
+	return "", fmt.Errorf("empty 'action.upload.destination_uri' in rule %v", m.rule.Name)
+ }
+
+ return tracesImpl.interpolateSpan(ctx, destinationUriPattern, s)
 }
 
 func computeDataEncoding(value pcommon.Value) ([]byte, error) {
@@ -248,30 +284,120 @@ func (tracesImpl *tracesToTracesImpl) computeContentTypeForSpanEventAttribute(
 	ctx context.Context,
 	se *spanEventReference,
 	m *matchedAttribute,
+	uri string,
 	data []byte) (string, error) {
- // TODO: ...
+ if m.rule.Action == nil {
+  return "", fmt.Errorf("missing 'action' in rule %v", m.rule.Name)
+ }
+ 
+ if m.rule.Action.Upload == nil {
+  return "", fmt.Errorf("missing 'action.upload' in rule %v", m.rule.Name)
+ }
+
+ uploadCfg := m.rule.Action.Upload
+ contentTypeCfg := uploadCfg.ContentType
+ if contentTypCfg == nil ||
+    ((contentTypeCfg != nil ) && (contentTypeCfg.Automatic != nil) && (contentTypCfg.Automatic.Enabled)) {
+   return contenttype.DeduceContentType(uri, data)
+ }
+
+ if len(contentTypeCfg.StaticValue) != 0 {
+	 return contentTypeCfg.StaticValue, nil
+ }
+
+ if contentTypeConfig.Extraction != nil {
+	 return tracesImpl.interpolateSpanEvent(ctx, contentTypeConfig.Extraction.Expression, se)
+ }
+
+ return nil, fmt.Errorf("unrecognized content type configuration for rule %v", m.rule.Name)
 }
 
 func (tracesImpl *tracesToTracesImpl) computeContentTypeForSpanAttribute(
 	ctx context.Context,
 	s *spanReference,
 	m *matchedAttribute,
+	uri string,
 	data []byte) (string, error) {
-  // TODO: ...
+ if m.rule.Action == nil {
+  return "", fmt.Errorf("missing 'action' in rule %v", m.rule.Name)
+ }
+
+  if m.rule.Action.Upload == nil {
+   return "", fmt.Errorf("missing 'action.upload' in rule %v", m.rule.Name)
+  }
+
+  uploadCfg := m.rule.Action.Upload
+  contentTypeCfg := uploadCfg.ContentType
+  if contentTypCfg == nil ||
+	((contentTypeCfg != nil ) && (contentTypeCfg.Automatic != nil) && (contentTypCfg.Automatic.Enabled)) {
+	return contenttype.DeduceContentType(uri, data)
+  }
+
+  if len(contentTypeCfg.StaticValue) != 0 {
+	return contentTypeCfg.StaticValue, nil
+  }
+
+  if contentTypeConfig.Extraction != nil {
+	return tracesImpl.interpolateSpan(ctx, contentTypeConfig.Extraction.Expression, s)
+  }
+
+  return nil, fmt.Errorf("unrecognized content type configuration for rule %v", m.rule.Name)
+}
+
+func (tracesImpl *tracesToTracesImpl) addMetadataLabels(
+	ctx context.Context,
+	m *matchedAttribute,
+	interpolateFunc func(context.Context, string) (string, error),
+	output map[string]string) error {
+ // TODO: ...
+ return nil
 }
 
 func (tracesImpl *tracesToTracesImpl) computeUploadMetadataForSpanEvent(
 	ctx context.Context,
 	se *spanEventReference,
     m *matchedAttribute) (map[string]string, error) {
-  // TODO: ...
+  result := map[string]string{
+	  "trace_id", se.span.TraceID().String(),
+	  "span_id", se.span.SpanId().String(),
+	  "event_index", se.event_index,
+	  "event_name", se.event.Name(),
+	  "event_attribute", m.key,
+  }
+
+  interpolateFunc := func(ctx context.Context, pattern string) (string, error) {
+	  return tracesImpl.interpolateSpanEvent(ctx, pattern, se)
+  }
+
+  err := tracesImpl.addMetadataLabels(ctx, m, interpolateFunc, result)
+  if err != nil {
+	  return nil, err
+  }
+
+  return result, nil
 }
 
 func (tracesImpl *tracesToTracesImpl) computeUploadMetadataForSpan(
 	ctx context.Context,
 	s *spanReference,
     m *matchedAttribute) (map[string]string, error) {
-  // TODO: ...
+ result := map[string]string{
+	"trace_id", s.span.TraceID().String(),
+	"span_id", s.span.SpanId().String(),
+	"span_attribute", m.key,
+ }
+
+ interpolateFunc := func(ctx context.Context, pattern string) (string, error) {
+	  return tracesImpl.interpolateSpan(ctx, pattern, s)
+ }
+
+
+ err := tracesImpl.addMetadataLabels(ctx, m, interpolateFunc, result)
+ if err != nil {
+	 return nil, err
+ }
+
+ return result, nil
 }
 
 type pendingUpload struct {
@@ -328,7 +454,7 @@ func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanEventAttribute(
 		return nil, derr
 	}
 
-	contentType, contentTypeErr := tracesToTracesImpl.computeContentTypeForSpanEventAttribute(ctx, se, m, d)
+	contentType, contentTypeErr := tracesToTracesImpl.computeContentTypeForSpanEventAttribute(ctx, se, m, destinationUri, d)
 	if contentTypeErr != nil {
 		return nil, contentTypeErr
 	}
@@ -418,7 +544,7 @@ func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanAttribute(
 		return nil, derr
 	}
 
-	contentType, contentTypeErr := tracesToTracesImpl.computeContentTypeForSpanAttribute(ctx, s, m, d)
+	contentType, contentTypeErr := tracesToTracesImpl.computeContentTypeForSpanAttribute(ctx, s, m, destinationUri, d)
 	if contentTypeErr != nil {
 		return nil, contentTypeErr
 	}
