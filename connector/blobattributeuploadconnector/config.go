@@ -15,7 +15,7 @@ import (
 // "Config" defines the configuration structure for this connector.
 type Config struct {
 	// Configuration regarding how this should apply to the traces signal.
-	Traces TracesConfig `mapstructure:"traces"`
+	Traces *TracesConfig `mapstructure:"traces"`
 
 	// Any fields which did not fall into the defined structure.
 	UnknownFields map[string]interface{} `mapstructure:",remain"`
@@ -24,7 +24,10 @@ type Config struct {
 // "TracesConfig" defines how this exporter should handle the traces signal.
 type TracesConfig struct {
 	// Configuration regarding the handling of trace attributes.
-	AttributeConfig TraceAttributeConfig `mapstructure:"attributes"`
+	AttributeConfig *TraceAttributeConfig `mapstructure:"attributes"`
+
+	// Configuration regarding the handling of span events.
+	SpanEventsConfig *SpanEventsConfig `mapstructure:"events"`
 
 	// Any fields which did not fall into the defined structure.
 	UnknownFields map[string]interface{} `mapstructure:",remain"`
@@ -34,7 +37,7 @@ type TracesConfig struct {
 // trace telemetry data (as oppposed to event attributes).
 type TraceAttributeConfig struct {
 	// Individual entries, each applying to a different key to match.
-	Rule []AttributeConfigRule `mapstructure:"rules"`
+	Rule []*AttributeConfigRule `mapstructure:"rules"`
 
 	// Any fields which did not fall into the defined structure.
 	UnknownFields map[string]interface{} `mapstructure:",remain"`
@@ -46,10 +49,10 @@ type AttributeConfigRule struct {
 	Name string `mapstructure:"name"`
 
 	// Determines which attribute should be matched by the rule.
-	Match MatchConfig `mapstructure:"match"`
+	Match *MatchConfig `mapstructure:"match"`
 
 	// Determines the kind of action to take for the matching attribute.
-	Action ActionConfig `mapstructure:"action"`
+	Action *ActionConfig `mapstructure:"action"`
 
 	// Any fields which did not fall into the defined structure.
 	UnknownFields map[string]interface{} `mapstructure:",remain"`
@@ -71,10 +74,10 @@ type MatchConfig struct {
 // "ActionConfig" defines the kind of action which should be taken.
 type ActionConfig struct {
 	// If only a subset of the matched keys should be handled.
-	Sampling SamplingConfig `mapstructure:"sample"`
+	Sampling *SamplingConfig `mapstructure:"sample"`
 
 	// How to upload the sampled content.
-	Upload UploadConfig `mapstructure:"upload"`
+	Upload *UploadConfig `mapstructure:"upload"`
 
 	// Any fields which did not fall into the defined structure.
 	UnknownFields map[string]interface{} `mapstructure:",remain"`
@@ -98,10 +101,10 @@ type UploadConfig struct {
 	DestinationUri string `mapstructure:"destination_uri"`
 
 	// What content type to use in the metadata.
-	ContentType ContentTypeConfig `mapstructure:"content_type"`
+	ContentType *ContentTypeConfig `mapstructure:"content_type"`
 
 	// Additional metadata to attach to the uploaded content.
-	MetadataLabels []MetadataLabelConfig `mapstructure:"labels"`
+	MetadataLabels []*MetadataLabelConfig `mapstructure:"labels"`
 
 	// Any fields which did not fall into the defined structure.
 	UnknownFields map[string]interface{} `mapstructure:",remain"`
@@ -110,13 +113,13 @@ type UploadConfig struct {
 // Configures how the content type will be determined.
 type ContentTypeConfig struct {
 	// Configures automatic content-type inference.
-	Automatic AutoContentTypeConfig `mapstructure:"automatic"`
+	Automatic *AutoContentTypeConfig `mapstructure:"automatic"`
 
 	// Allows the content type to be specified from a static string.
 	StaticValue string `mapstructure:"static_value"`
 
 	// Allows the content type to be extracted from other properties.
-	Extraction ExtractionConfig `mapstructure:"extraction"`
+	Extraction *ExtractionConfig `mapstructure:"extraction"`
 
 	// Any fields which did not fall into the defined structure.
 	UnknownFields map[string]interface{} `mapstructure:",remain"`
@@ -146,7 +149,7 @@ type MetadataLabelConfig struct {
 	Key string `mapstructure:"key"`
 
 	// The value of the metadata property.
-	Value MetadataLabelValueConfig `mapstructure:"value"`
+	Value *MetadataLabelValueConfig `mapstructure:"value"`
 
 	// Any fields which did not fall into the defined structure.
 	UnknownFields map[string]interface{} `mapstructure:",remain"`
@@ -158,7 +161,52 @@ type MetadataLabelValueConfig struct {
 	StaticValue string `mapstructure:"static_value"`
 
 	// Allows the label value to be extracted from other properties.
-	Extraction ExtractionConfig `mapstructure:"extraction"`
+	Extraction *ExtractionConfig `mapstructure:"extraction"`
+
+	// Any fields which did not fall into the defined structure.
+	UnknownFields map[string]interface{} `mapstructure:",remain"`
+}
+
+// Configuration that is intended to apply to span events.
+type SpanEventsConfig struct {
+	// Groups of rules, grouped by event name.
+	Groups []*SpanEventsConfigGroup `mapstructure:"groups"`
+
+	// Any fields which did not fall into the defined structure.
+	UnknownFields map[string]interface{} `mapstructure:",remain"`
+}
+
+// Configuration that applies to a list of named events.
+type SpanEventsConfigGroup struct {
+	// Name used to identify the group in the configuration
+	Name string `mapstructure:"name"`
+
+	// Describes how to to match the event name
+	EventName *EventNameMatchConfig `mapstructure:"event_name"`
+
+	// Rules / configuration that apply to attributes in the group
+	Attributes *SpanEventAttributeConfig `mapstructure:"attributes"`
+
+	// Any fields which did not fall into the defined structure.
+	UnknownFields map[string]interface{} `mapstructure:",remain"`
+}
+
+// Configures how to match a particular event name
+type EventNameMatchConfig struct {
+	// Indicates that all event names should be matched.
+	MatchAll bool `mapstructure:"match_all"`
+
+	// A list of exact names to match.
+	MatchIfAnyEqualTo []string `mapstructure:"match_if_any_equal_to"`
+
+	// Any fields which did not fall into the defined structure.
+	UnknownFields map[string]interface{} `mapstructure:",remain"`
+}
+
+// Configures how to process the attributes of the span events
+type SpanEventAttributeConfig struct {
+	// Individual entries, each applying to a different key to match.
+	Rule []*AttributeConfigRule `mapstructure:"rules"`
 
 	// Any fields which did not fall into the defined structure.
 	UnknownFields map[string]interface{} `mapstructure:",remain"`
@@ -172,10 +220,12 @@ func errorIfUnknown(u map[string]interface{}) error {
 	return nil
 }
 
-// Verifies that the configuration is valid.
+// Validate verifies that the configuration is well-formed.
 func (c *Config) Validate() error {
-	if err := c.Traces.Validate(); err != nil {
-		return err
+	if c.Traces != nil {
+		if err := c.Traces.Validate(); err != nil {
+			return err
+		}
 	}
 	if err := errorIfUnknown(c.UnknownFields); err != nil {
 		return err
@@ -183,10 +233,17 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// Verifies that the configuration is valid.
+// Validate verifies that the configuration is well-formed.
 func (tc *TracesConfig) Validate() error {
-	if err := tc.AttributeConfig.Validate(); err != nil {
-		return err
+	if tc.AttributeConfig != nil {
+		if err := tc.AttributeConfig.Validate(); err != nil {
+			return err
+		}
+	}
+	if tc.SpanEventsConfig != nil {
+		if err := tc.SpanEventsConfig.Validate(); err != nil {
+			return err
+		}
 	}
 	if err := errorIfUnknown(tc.UnknownFields); err != nil {
 		return err
@@ -194,7 +251,6 @@ func (tc *TracesConfig) Validate() error {
 	return nil
 }
 
-// Helper for "TraceAttributeConfig.Validate()" below.
 func validateTraceLocation(ruleName string, location string) error {
 	if location == "span" {
 		return nil
@@ -208,7 +264,7 @@ func validateTraceLocation(ruleName string, location string) error {
 	return fmt.Errorf("In rule %v: unknown location: %v. Valid values are: [span, scope, resource].", ruleName, location)
 }
 
-// Verifies that the configuration is valid.
+// Validate verifies that the configuration is well-formed.
 func (tac *TraceAttributeConfig) Validate() error {
 	names := make(map[string]bool)
 	for _, rule := range tac.Rule {
@@ -231,13 +287,19 @@ func (tac *TraceAttributeConfig) Validate() error {
 	return nil
 }
 
-// Verifies that the configuration is valid.
+// Validate verifies that the configuration is well-formed.
 func (acr *AttributeConfigRule) Validate() error {
 	if len(acr.Name) == 0 {
 		return errors.New("Missing required name for config rule.")
 	}
+	if acr.Match == nil {
+		return errors.New("Must specify a 'match' condition.")
+	}
 	if err := acr.Match.Validate(); err != nil {
 		return err
+	}
+	if acr.Action == nil {
+		return errors.New("Must specifify an 'action' condition.")
 	}
 	if err := acr.Action.Validate(); err != nil {
 		return err
@@ -248,7 +310,7 @@ func (acr *AttributeConfigRule) Validate() error {
 	return nil
 }
 
-// Verifies that the configuration is valid.
+// Validate verifies that the configuration is well-formed.
 func (mc *MatchConfig) Validate() error {
 	if len(mc.Key) == 0 {
 		return errors.New("Missing required key in match configuration.")
@@ -259,10 +321,15 @@ func (mc *MatchConfig) Validate() error {
 	return nil
 }
 
-// Verifies that the configuration is valid.
+// Validate verifies that the configuration is well-formed.
 func (ac *ActionConfig) Validate() error {
-	if err := ac.Sampling.Validate(); err != nil {
-		return err
+	if ac.Sampling != nil {
+		if err := ac.Sampling.Validate(); err != nil {
+			return err
+		}
+	}
+	if ac.Upload == nil {
+		return errors.New("Must specify 'upload' in action.")
 	}
 	if err := ac.Upload.Validate(); err != nil {
 		return err
@@ -273,7 +340,7 @@ func (ac *ActionConfig) Validate() error {
 	return nil
 }
 
-// Verifies that the configuration is valid.
+// Validate verifies that the configuration is well-formed.
 func (sc *SamplingConfig) Validate() error {
 	if sc.Percent < 0 || sc.Percent > 100 {
 		return fmt.Errorf("Invalid percentage: %v", sc.Percent)
@@ -284,13 +351,15 @@ func (sc *SamplingConfig) Validate() error {
 	return nil
 }
 
-// Verifies that the configuration is valid.
+// Validate verifies that the configuration is well-formed.
 func (uc *UploadConfig) Validate() error {
 	if len(uc.DestinationUri) == 0 {
 		return errors.New("Destination URI must not be empty.")
 	}
-	if err := uc.ContentType.Validate(); err != nil {
-		return err
+	if uc.ContentType != nil {
+		if err := uc.ContentType.Validate(); err != nil {
+			return err
+		}
 	}
 	metadataKeys := make(map[string]bool)
 	for _, metadata := range uc.MetadataLabels {
@@ -314,17 +383,19 @@ func validateContentTypeString(ct string) error {
 	return nil
 }
 
-// Verifies that the configuration is valid.
+// Validate verifies that the configuration is well-formed.
 func (ctc *ContentTypeConfig) Validate() error {
 	// Treat fields like a "oneof"
-	if ctc.Automatic.Enabled && len(ctc.StaticValue) > 0 {
-		return errors.New("Cannot set both 'static_value' and 'automatic.enabled: true' for Content Type.")
+	if ctc.Automatic != nil {
+		if ctc.Automatic.Enabled && len(ctc.StaticValue) > 0 {
+			return errors.New("Cannot set both 'static_value' and 'automatic.enabled: true' for Content Type.")
+		}
+		if ctc.Automatic.Enabled && ctc.Extraction != nil {
+			return errors.New("Cannot set both 'extraction' and 'automatic.enabled: true' for Content Type.")
+		}
 	}
-	if ctc.Automatic.Enabled && len(ctc.Extraction.Expression) > 0 {
-		return errors.New("Cannot set both 'extraction.expression' and 'automatic.enabled: true' for Content Type.")
-	}
-	if len(ctc.StaticValue) > 0 && len(ctc.Extraction.Expression) > 0 {
-		return errors.New("Cannot set both 'extraction.expression' and 'static_value' for Content Type.")
+	if len(ctc.StaticValue) > 0 && ctc.Extraction != nil {
+		return errors.New("Cannot set both 'extraction' and 'static_value' for Content Type.")
 	}
 
 	// Prevent use of unknown fields.
@@ -333,13 +404,13 @@ func (ctc *ContentTypeConfig) Validate() error {
 	}
 
 	// Validate the one that is populated.
-	if ctc.Automatic.Enabled {
+	if ctc.Automatic != nil {
 		return ctc.Automatic.Validate()
 	}
 	if len(ctc.StaticValue) > 0 {
 		return validateContentTypeString(ctc.StaticValue)
 	}
-	if len(ctc.Extraction.Expression) > 0 {
+	if ctc.Extraction != nil {
 		return ctc.Extraction.Validate()
 	}
 
@@ -347,7 +418,7 @@ func (ctc *ContentTypeConfig) Validate() error {
 	return nil
 }
 
-// Verifies that the configuration is valid.
+// Validate verifies that the configuration is well-formed.
 func (actc *AutoContentTypeConfig) Validate() error {
 	// Disallow unknown fields.
 	if err := errorIfUnknown(actc.UnknownFields); err != nil {
@@ -358,21 +429,29 @@ func (actc *AutoContentTypeConfig) Validate() error {
 	return nil
 }
 
-// Verifies that the configuration is valid.
+// Validate verifies that the configuration is well-formed.
 func (ec *ExtractionConfig) Validate() error {
-	// Dislallow unknown fields.
+	// Require a non-empty expression
+	if len(ec.Expression) == 0 {
+		return errors.New("Must specify a non-empty 'expression'.")
+	}
+
+	// Disallow unknown fields.
 	if err := errorIfUnknown(ec.UnknownFields); err != nil {
 		return err
 	}
 
-	// TODO: implement
+	// TODO: validate the actual contents of the expression
 	return nil
 }
 
-// Verifies that the configuration is valid.
+// Validate verifies that the configuration is well-formed.
 func (mlc *MetadataLabelConfig) Validate() error {
 	if len(mlc.Key) == 0 {
 		return errors.New("Label key cannot be empty.")
+	}
+	if mlc.Value == nil {
+		return errors.New("Must specify a 'value' configuration.")
 	}
 	if err := errorIfUnknown(mlc.UnknownFields); err != nil {
 		return err
@@ -380,11 +459,11 @@ func (mlc *MetadataLabelConfig) Validate() error {
 	return mlc.Value.Validate()
 }
 
-// Verifies that the configuration is valid.
+// Validate verifies that the configuration is well-formed.
 func (mlvc *MetadataLabelValueConfig) Validate() error {
 	// Enforce mutual exclusion of oneof options.
-	if len(mlvc.StaticValue) > 0 && len(mlvc.Extraction.Expression) > 0 {
-		return errors.New("Cannot set both 'extraction.expression' and 'static_value' for label values.")
+	if len(mlvc.StaticValue) > 0 && mlvc.Extraction != nil {
+		return errors.New("Cannot set both 'extraction' and 'static_value' for label values.")
 	}
 
 	// Prevent presence of unknown fields.
@@ -393,14 +472,75 @@ func (mlvc *MetadataLabelValueConfig) Validate() error {
 	}
 
 	// Require that at least one option is set.
-	if len(mlvc.StaticValue) == 0 && len(mlvc.Extraction.Expression) == 0 {
-		return errors.New("Must set either 'static_value' or 'extraction.expression'.")
+	if len(mlvc.StaticValue) == 0 && mlvc.Extraction == nil {
+		return errors.New("Must set either 'static_value' or 'extraction'.")
 	}
 
 	// Validate the expression if present
-	if len(mlvc.Extraction.Expression) > 0 {
+	if mlvc.Extraction != nil {
 		return mlvc.Extraction.Validate()
 	}
 
+	return nil
+}
+
+// Validate verifies that the configuration is well-formed.
+func (sec *SpanEventsConfig) Validate() error {
+	for _, group := range sec.Groups {
+		if err := group.Validate(); err != nil {
+			return err
+		}
+	}
+	if err := errorIfUnknown(sec.UnknownFields); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Validate verifies that the configuration is well-formed.
+func (secg *SpanEventsConfigGroup) Validate() error {
+	if secg.Name == "" {
+		return errors.New("Event group missing name")
+	}
+	if secg.EventName != nil {
+		if err := secg.EventName.Validate(); err != nil {
+			return err
+		}
+	}
+	if secg.Attributes != nil {
+		if err := secg.Attributes.Validate(); err != nil {
+			return err
+		}
+	}
+	if err := errorIfUnknown(secg.UnknownFields); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Validate verifies that the configuration is well-formed.
+func (enmc *EventNameMatchConfig) Validate() error {
+	if enmc.MatchAll && len(enmc.MatchIfAnyEqualTo) > 0 {
+		return errors.New("Cannot set both 'match_all' and 'match_if_any_equal_to'.")
+	}
+	if !enmc.MatchAll && (len(enmc.MatchIfAnyEqualTo) == 0) {
+		return errors.New("Never matches any event; set 'match_all' or 'match_if_any_equal_to'.")
+	}
+	return nil
+}
+
+// Validate verifies that the configuration is well-formed.
+func (seac *SpanEventAttributeConfig) Validate() error {
+	for _, rule := range seac.Rule {
+		if err := rule.Validate(); err != nil {
+			return err
+		}
+		if len(rule.Match.Locations) > 0 {
+			return errors.New("Cannot set match location for span events.")
+		}
+	}
+	if err := errorIfUnknown(seac.UnknownFields); err != nil {
+		return err
+	}
 	return nil
 }
