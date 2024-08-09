@@ -28,6 +28,7 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobattributeuploadconnector/internal/backend"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobattributeuploadconnector/internal/contenttype"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobattributeuploadconnector/internal/foreignattr"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobattributeuploadconnector/internal/payload"
 )
 
 type passThroughTracesConnector struct {
@@ -297,10 +298,8 @@ func (tracesImpl *tracesToTracesImpl) computeDestinationUriForSpan(
 }
 
 func computeDataEncoding(value pcommon.Value) ([]byte, error) {
-  // TODO: ...
- return []byte{}, nil
+	return payload.ValueToBytes(value)
 }
-
 
 func (tracesImpl *tracesToTracesImpl) computeContentTypeCommon(
 	ctx context.Context,
