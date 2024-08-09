@@ -205,10 +205,6 @@ type tracesToTracesImpl struct {
 	component.ShutdownFunc
 }
 
-func setInMap(m pcommon.Map, key string, item pcommon.Value) {
-	item.CopyTo(m.PutEmpty(key))
-}
-
 func (tracesImpl *tracesToTracesImpl) shouldSampleAttributeInTrace(m *matchedAttribute, traceID pcommon.TraceID) bool {
 	if m.rule.Action == nil  {
 		return false
@@ -221,8 +217,8 @@ func (tracesImpl *tracesToTracesImpl) shouldSampleAttributeInTrace(m *matchedAtt
 	}
 
 	samplePercent := m.rule.Action.Sampling.Percent
-	hashVal := maphash.Bytes(tracesImpl.seed, traceID)
-	mod100 := hashVal % 100
+	hashVal := maphash.Bytes(tracesImpl.seed, []byte(traceID[:]))
+	mod100 := int(hashVal % 100)
 	return mod100 < samplePercent
 }
 
@@ -238,12 +234,28 @@ func (tracesImpl *tracesToTracesImpl) interpolateSpanEvent(
 	ctx context.Context,
 	pattern string,
 	se *spanEventReference) (string, error) {
+ // TODO: ...
+ return "", nil
 }
 
 func (tracesImpl *tracesToTracesImpl) interpolateSpan(
 	ctx context.Context,
 	pattern string,
 	s *spanReference) (string, error) {
+  // TODO: ...
+  return "", nil
+}
+
+func (tracesImpl *tracesToTracesImpl) interpolateFuncForSpanEvent(se *spanEventReference) func(context.Context, string) (string, error) {
+	return func(ctx context.Context, pattern string) (string, error) {
+		return tracesImpl.interpolateSpanEvent(ctx, pattern, se)
+	}
+}
+
+func (tracesImpl *tracesToTracesImpl) interpolateFuncForSpan(s *spanReference) func(context.Context, string) (string, error) {
+	return func(ctx context.Context, pattern string) (string, error) {
+		return tracesImpl.interpolateSpan(ctx, pattern, s)
+	}
 }
 
 func (tracesImpl *tracesToTracesImpl) computeDestinationUriForSpanEvent(
@@ -257,7 +269,7 @@ func (tracesImpl *tracesToTracesImpl) computeDestinationUriForSpanEvent(
 	return "", fmt.Errorf("missing 'action.upload' in rule %v", m.rule.Name)
   }
 
-  destinationUriPattern := m.rule.action.Upload.DestinationUri
+  destinationUriPattern := m.rule.Action.Upload.DestinationUri
   if len(destinationUriPattern) == 0 {
 	return "", fmt.Errorf("empty 'action.upload.destination_uri' in rule %v", m.rule.Name)
   }
@@ -276,7 +288,7 @@ func (tracesImpl *tracesToTracesImpl) computeDestinationUriForSpan(
 	return "", fmt.Errorf("missing 'action.upload' in rule %v", m.rule.Name)
  }
 
- destinationUriPattern := m.rule.action.Upload.DestinationUri
+ destinationUriPattern := m.rule.Action.Upload.DestinationUri
  if len(destinationUriPattern) == 0 {
 	return "", fmt.Errorf("empty 'action.upload.destination_uri' in rule %v", m.rule.Name)
  }
@@ -286,12 +298,14 @@ func (tracesImpl *tracesToTracesImpl) computeDestinationUriForSpan(
 
 func computeDataEncoding(value pcommon.Value) ([]byte, error) {
   // TODO: ...
+ return []byte{}, nil
 }
 
-func (tracesImpl *tracesToTracesImpl) computeContentTypeForSpanEventAttribute(
+
+func (tracesImpl *tracesToTracesImpl) computeContentTypeCommon(
 	ctx context.Context,
-	se *spanEventReference,
 	m *matchedAttribute,
+	interplateFunc func(context.Context, string) (string, error),
 	uri string,
 	data []byte) (string, error) {
  if m.rule.Action == nil {
@@ -304,8 +318,8 @@ func (tracesImpl *tracesToTracesImpl) computeContentTypeForSpanEventAttribute(
 
  uploadCfg := m.rule.Action.Upload
  contentTypeCfg := uploadCfg.ContentType
- if contentTypCfg == nil ||
-    ((contentTypeCfg != nil ) && (contentTypeCfg.Automatic != nil) && (contentTypCfg.Automatic.Enabled)) {
+ if contentTypeCfg == nil ||
+    ((contentTypeCfg != nil ) && (contentTypeCfg.Automatic != nil) && (contentTypeCfg.Automatic.Enabled)) {
    return contenttype.DeduceContentType(uri, data)
  }
 
@@ -313,11 +327,26 @@ func (tracesImpl *tracesToTracesImpl) computeContentTypeForSpanEventAttribute(
 	 return contentTypeCfg.StaticValue, nil
  }
 
- if contentTypeConfig.Extraction != nil {
-	 return tracesImpl.interpolateSpanEvent(ctx, contentTypeConfig.Extraction.Expression, se)
+ if contentTypeCfg.Extraction != nil {
+	 return interplateFunc(ctx, contentTypeCfg.Extraction.Expression)
  }
 
- return nil, fmt.Errorf("unrecognized content type configuration for rule %v", m.rule.Name)
+ return "", fmt.Errorf("unrecognized content type configuration for rule %v", m.rule.Name)
+}
+
+func (tracesImpl *tracesToTracesImpl) computeContentTypeForSpanEventAttribute(
+	ctx context.Context,
+	se *spanEventReference,
+	m *matchedAttribute,
+	uri string,
+	data []byte) (string, error) {
+  interpolateFunc := tracesImpl.interpolateFuncForSpanEvent(se)
+  return tracesImpl.computeContentTypeCommon(
+	  ctx,
+	  m,
+	  interpolateFunc,
+	  uri,
+	  data)
 }
 
 func (tracesImpl *tracesToTracesImpl) computeContentTypeForSpanAttribute(
@@ -326,30 +355,13 @@ func (tracesImpl *tracesToTracesImpl) computeContentTypeForSpanAttribute(
 	m *matchedAttribute,
 	uri string,
 	data []byte) (string, error) {
- if m.rule.Action == nil {
-  return "", fmt.Errorf("missing 'action' in rule %v", m.rule.Name)
- }
-
-  if m.rule.Action.Upload == nil {
-   return "", fmt.Errorf("missing 'action.upload' in rule %v", m.rule.Name)
-  }
-
-  uploadCfg := m.rule.Action.Upload
-  contentTypeCfg := uploadCfg.ContentType
-  if contentTypCfg == nil ||
-	((contentTypeCfg != nil ) && (contentTypeCfg.Automatic != nil) && (contentTypCfg.Automatic.Enabled)) {
-	return contenttype.DeduceContentType(uri, data)
-  }
-
-  if len(contentTypeCfg.StaticValue) != 0 {
-	return contentTypeCfg.StaticValue, nil
-  }
-
-  if contentTypeConfig.Extraction != nil {
-	return tracesImpl.interpolateSpan(ctx, contentTypeConfig.Extraction.Expression, s)
-  }
-
-  return nil, fmt.Errorf("unrecognized content type configuration for rule %v", m.rule.Name)
+ interpolateFunc := tracesImpl.interpolateFuncForSpan(s)
+ return tracesImpl.computeContentTypeCommon(
+	ctx,
+	m,
+	interpolateFunc,
+	uri,
+	data)
 }
 
 func (tracesImpl *tracesToTracesImpl) addMetadataLabels(
@@ -366,17 +378,14 @@ func (tracesImpl *tracesToTracesImpl) computeUploadMetadataForSpanEvent(
 	se *spanEventReference,
     m *matchedAttribute) (map[string]string, error) {
   result := map[string]string{
-	  "trace_id", se.span.TraceID().String(),
-	  "span_id", se.span.SpanId().String(),
-	  "event_index", se.event_index,
-	  "event_name", se.event.Name(),
-	  "event_attribute", m.key,
+	  "trace_id": se.span.span.TraceID().String(),
+	  "span_id": se.span.span.SpanID().String(),
+	  "event_index": fmt.Sprintf("%v", se.index),
+	  "event_name": se.event.Name(),
+	  "event_attribute": m.key,
   }
 
-  interpolateFunc := func(ctx context.Context, pattern string) (string, error) {
-	  return tracesImpl.interpolateSpanEvent(ctx, pattern, se)
-  }
-
+  interpolateFunc := tracesImpl.interpolateFuncForSpanEvent(se)
   err := tracesImpl.addMetadataLabels(ctx, m, interpolateFunc, result)
   if err != nil {
 	  return nil, err
@@ -390,16 +399,12 @@ func (tracesImpl *tracesToTracesImpl) computeUploadMetadataForSpan(
 	s *spanReference,
     m *matchedAttribute) (map[string]string, error) {
  result := map[string]string{
-	"trace_id", s.span.TraceID().String(),
-	"span_id", s.span.SpanId().String(),
-	"span_attribute", m.key,
+	"trace_id": s.span.TraceID().String(),
+	"span_id": s.span.SpanID().String(),
+	"span_attribute": m.key,
  }
 
- interpolateFunc := func(ctx context.Context, pattern string) (string, error) {
-	  return tracesImpl.interpolateSpan(ctx, pattern, s)
- }
-
-
+ interpolateFunc := tracesImpl.interpolateFuncForSpan(s)
  err := tracesImpl.addMetadataLabels(ctx, m, interpolateFunc, result)
  if err != nil {
 	 return nil, err
@@ -421,19 +426,32 @@ func (tracesImpl *tracesToTracesImpl) scheduleUpload(
 	ctx context.Context,
 	pending *pendingUpload) error {
   // TODO: ...
+  return nil
 }
 
-func (tracesImpl *tracesToTracesImpl) createForeignAttr(uri string, contentType string) pcommon.Value {
+type foreignAttrRef struct {
+	value pcommon.Value
+}
+
+func setInMap(m pcommon.Map, key string, item *foreignAttrRef) {
+	item.value.CopyTo(m.PutEmpty(key))
+}
+
+func (tracesImpl *tracesToTracesImpl) createForeignAttr(uri string, contentType string) *foreignAttrRef {
 	if len(contentType) == 0 {
-		return foreignattr.FromUri(uri)
+		return &foreignAttrRef{
+			value: foreignattr.FromUri(uri),
+		}
 	}
-	return foreignattr.FromUriWithContentType(uri, contentType)
+	return &foreignAttrRef {
+		value: foreignattr.FromUriWithContentType(uri, contentType),
+	}
 }
 
 func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanEventAttribute(
 	ctx context.Context,
 	se *spanEventReference,
-    m *matchedAttribute) (pcommon.Value, error) {
+    m *matchedAttribute) (*foreignAttrRef, error) {
 	if (!tracesImpl.shouldSampleSpanEventAttribute(se, m)) {
 		return nil, nil
 	}
@@ -448,7 +466,7 @@ func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanEventAttribute(
 		return nil, destinationUriErr
 	}
 
-	b, berr := tracesImpl.backendRegistry.GetBackendForUri(destinationUri)
+	b, berr := tracesImpl.backendRegistry.GetBackendForURI(destinationUri)
 	if berr != nil {
 		tracesImpl.settings.Logger.Error(
 			"Could not find suitable storage backend for destination URI",
@@ -462,7 +480,7 @@ func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanEventAttribute(
 		return nil, derr
 	}
 
-	contentType, contentTypeErr := tracesToTracesImpl.computeContentTypeForSpanEventAttribute(ctx, se, m, destinationUri, d)
+	contentType, contentTypeErr := tracesImpl.computeContentTypeForSpanEventAttribute(ctx, se, m, destinationUri, d)
 	if contentTypeErr != nil {
 		return nil, contentTypeErr
 	}
@@ -523,7 +541,7 @@ func (tracesImpl *tracesToTracesImpl) consumeSpanEvent(ctx context.Context, se *
 func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanAttribute(
 	ctx context.Context,
 	s *spanReference,
-    m *matchedAttribute) (pcommon.Value, error) {
+    m *matchedAttribute) (*foreignAttrRef, error) {
 	if (!tracesImpl.shouldSampleSpanAttribute(s, m)) {
 		return nil, nil
 	}
@@ -538,7 +556,7 @@ func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanAttribute(
 		return nil, destinationUriErr
 	}
 
-	b, berr := tracesImpl.backendRegistry.GetBackendForUri(destinationUri)
+	b, berr := tracesImpl.backendRegistry.GetBackendForURI(destinationUri)
 	if berr != nil {
 		tracesImpl.settings.Logger.Error(
 			"Could not find suitable storage backend for destination URI",
@@ -552,7 +570,7 @@ func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanAttribute(
 		return nil, derr
 	}
 
-	contentType, contentTypeErr := tracesToTracesImpl.computeContentTypeForSpanAttribute(ctx, s, m, destinationUri, d)
+	contentType, contentTypeErr := tracesImpl.computeContentTypeForSpanAttribute(ctx, s, m, destinationUri, d)
 	if contentTypeErr != nil {
 		return nil, contentTypeErr
 	}
@@ -662,13 +680,13 @@ func (tracesImpl *tracesToTracesImpl) ConsumeTraces(ctx context.Context, td ptra
 					zap.String("traceID", span.TraceID().String()),
 				    zap.String("spanID", span.SpanID().String()))
 				ottlCtx := ottlspan.NewTransformContext(
-					span, scope, resource, scopeSpans, resourceSpans)
+					span, scope, resource, scopeSpan, resourceSpan)
 				ref := &spanReference{
 					resource:      resource,
 					scope:         scope,
 					span:          span,
-					scopeSpans:    scopeSpans,
-					resourceSpans: resourceSpans,
+					scopeSpans:    scopeSpan,
+					resourceSpans: resourceSpan,
 					ottlCtx:       ottlCtx,
 				}
 				if err := tracesImpl.consumeSpan(ctx, ref); err != nil {
@@ -800,7 +818,7 @@ func createTracesToTracesConnector(
 
   result := &tracesToTracesImpl{
 	  settings: settings,
-	  nextConsumer: settings,
+	  nextConsumer: nextConsumer,
 	  spanAttributes: spanAttributes,
 	  spanEvents: spanEvents,
 	  backendRegistry: backendRegistry,
