@@ -235,16 +235,24 @@ func (tracesImpl *tracesToTracesImpl) interpolateSpanEvent(
 	ctx context.Context,
 	pattern string,
 	se *spanEventReference) (string, error) {
- // TODO: ...
- return "", nil
+  parser, err := ottlspanevent.NewParser(tracesImpl.spanEventFuncs, tracesImpl.settings)
+ if err != nil {
+	return "", err
+ }
+
+ return parser.InterpolateString(ctx, se.ottlCtx)
 }
 
 func (tracesImpl *tracesToTracesImpl) interpolateSpan(
 	ctx context.Context,
 	pattern string,
 	s *spanReference) (string, error) {
-  // TODO: ...
-  return "", nil
+  parser, err := ottlspan.NewParser(tracesImpl.spanFuncs, tracesImpl.settings)
+  if err != nil {
+	  return "", err
+  }
+
+  return parser.InterpolateString(ctx, s.ottlCtx)
 }
 
 func (tracesImpl *tracesToTracesImpl) interpolateFuncForSpanEvent(se *spanEventReference) func(context.Context, string) (string, error) {
