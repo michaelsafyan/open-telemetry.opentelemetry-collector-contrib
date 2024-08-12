@@ -14,6 +14,14 @@ import (
 
 // "Config" defines the configuration structure for this connector.
 type Config struct {
+	// The maximum number of files/blobs to enqueue for upload. Note
+	// that this is a count of the number of items/files, not a count
+	// of the total bytes or throughput amount.
+	UploadQueueSize int64 `mapstructure:"upload_queue_size"`
+
+	// Maximum duration to allow for an upload to a storage backend.
+	UploadTimeoutNanos int64 `mapstructure:"upload_timeout_nanos"`
+
 	// Configuration regarding how this should apply to the traces signal.
 	Traces *TracesConfig `mapstructure:"traces"`
 

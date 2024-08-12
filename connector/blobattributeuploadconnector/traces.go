@@ -202,8 +202,70 @@ type tracesToTracesImpl struct {
 	spanFuncs map[string]ottl.Factory[ottlspan.TransformContext]
 	spanEventFuncs map[string]ottl.Factory[ottlspanevent.TransformContext]
 	seed maphash.Seed
-	component.StartFunc
-	component.ShutdownFunc
+	uploadDurationNanos time.Duration
+	running bool
+	pendingUploadChannel chan *pendingUpload
+	shutDownCompleted chan bool
+}
+
+type uploadMetadataImpl {
+	contentType string
+	labels map[string]string
+}
+
+func (u *uploadMetadataImpl) ContentType() string {
+	return u.contentType
+}
+
+func (u *uploadMetadataImpl) Labels() map[string]string {
+	return u.labels
+}
+
+func (tracesImpl *tracesToTracesImpl) uploadInBackground() {
+	tracesImpl.settings.Logger.Debug("Background uploader thread now running.")
+	for p := range tracesImpl.pendingUploadChannel {
+		metadata := &uploadMetadataImpl{
+			contentType: p.contentType,
+			labels: p.metadataLabels,
+		}
+		ctx, cancel := context.WithTimeout(ctx.Background(), tracesImpl.uploadDurationNanos)
+		err := storageBackend.Upload(ctx, p.destinationUri, p.data, metadata)
+		if err != nil {
+			tracesImpl.settings.Logger.Error(
+				"Failed to upload in background",
+				zap.String("destinationUri", p.destinationUri),
+				zap.String("dataSizeBytes", len(p.data)),
+				zap.Duration("timeout", tracesImpl.uploadDurationNanos),
+				zap.String("contentType", p.contentType),
+				zap.NamedError("backendError", err)	
+			)
+		}
+		defer cancel()
+	}
+
+	tracesImpl.shutDownCompleted <- true
+	close(tracesImpl.shutDownCompleted)
+}
+
+func (tracesImpl *tracesToTracesImpl) Start(ctx context.Context, host Host) error {
+	tracesImpl.settings.Logger.Debug("Starting connector...")
+	go tracesImpl.uploadInBackground()
+	tracesImpl.running = true
+	tracesImpl.settings.Logger.Debug("Connector now running.")
+}
+
+func (tracesImpl *tracesToTracesImpl) Shutdown(ctx context.Context) error {
+	tracesImpl.settings.Logger.Debug("Shutting own the connector...")
+	tracesImpl.running = false
+	close(tracesImpl.pendingUploadChannel)
+	for shutDownCompleted := range tracesImpl.shutDownCompleted {
+		if shutDownCompleted {
+			tracesImpl.settings.Logger.Debug("Connector shut down successfully")
+			return nil
+		}
+	}
+	tracesImpl.settings.Logger.Warn("Unexpected failure while shutting down the connector.")
+	return errors.New("Failed to shut down the connector.")
 }
 
 func (tracesImpl *tracesToTracesImpl) shouldSampleAttributeInTrace(m *matchedAttribute, traceID pcommon.TraceID) bool {
@@ -432,7 +494,7 @@ type pendingUpload struct {
 func (tracesImpl *tracesToTracesImpl) scheduleUpload(
 	ctx context.Context,
 	pending *pendingUpload) error {
-  // TODO: ...
+  tracesImpl.pendingUploadChannel <- pending
   return nil
 }
 
@@ -669,6 +731,13 @@ func (tracesImpl *tracesToTracesImpl) Capabilities() consumer.Capabilities {
 func (tracesImpl *tracesToTracesImpl) ConsumeTraces(ctx context.Context, td ptrace.Traces) error {
 	tracesImpl.settings.Logger.Debug("Received new traces batch to process")
 
+	if !tracesImpl.running {
+		tracesImpl.settings.Logger.Error(
+			"Connector has been shut down or hasn't started yet, but received new traces.")
+		return errors.New(
+			"Connector not running; did you already Shutdown()? Or have you forgotten to Start() the connector before sending data to it?")
+	}
+
 	resourceSpans := td.ResourceSpans()
 	for i := 0; i < resourceSpans.Len(); i++ {
 		resourceSpan := resourceSpans.At(i)
@@ -822,7 +891,6 @@ func createTracesToTracesConnector(
   }
   settings.Logger.Debug("Collected span event attribute configuration")
 
-
   result := &tracesToTracesImpl{
 	  settings: settings,
 	  nextConsumer: nextConsumer,
@@ -832,6 +900,10 @@ func createTracesToTracesConnector(
 	  spanFuncs: createSpanFuncs(),
 	  spanEventFuncs: createSpanEventFuncs(),
 	  seed: maphash.MakeSeed(),
+	  uploadDurationNanos: time.Duration(cfg.UploadTimeoutNanos),
+	  running: false,
+	  pendingUploadChannel: make(chan *pendingUpload, cfg.UploadQueueSize),
+	  shutDownCompleted: make(chan bool, 1),
   }
   settings.Logger.Debug("Constructed traces-to-traces connector")
 

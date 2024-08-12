@@ -15,7 +15,10 @@ import (
 )
 
 func createDefaultConfig() component.Config {
-	return &Config{}
+	return &Config{
+		UploadQueueSize:    1024,
+		UploadTimeoutNanos: int64(5 * time.Second),
+	}
 }
 
 func NewFactory() connector.Factory {
