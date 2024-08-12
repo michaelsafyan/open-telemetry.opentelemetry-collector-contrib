@@ -98,6 +98,101 @@ func WithEnumParser[K any](parser EnumParser) Option[K] {
 	return func(p *Parser[K]) {
 		p.enumParser = parser
 	}
+
+// Helper of "InterpolateString" that expands a single variable without bells and whistles.
+// The input is expected to be a path to a variable that is convertible to a string.
+func (p *Parser[K]) evalSimpleStringExpression(
+	ctx context.Context, s string, tCtx K) (string, error) {
+	expr = "String(" + s + ")"
+	stmt, err := p.ParseStatement(expr)
+	if err !=  nil {
+		return "", err
+	}
+
+	value, ok, stmtErr := stmt.Execute(ctx, tCtx)
+	if stmtErr != nil {
+		return "", stmtErr
+	}
+	if !ok || value == nil {
+		return "", errors.New("failed to evaluate: %v", s)
+	}
+	
+	slg := value.(*ottl.StringLikeGetter[K])
+	return slg.Get(ctx, tCtx)
+}
+
+// Helper of "InterpolateString" that expands a single sub-expression contained in
+// "${ ... }" syntax. This sub-expression can optionally include a default value
+// as in "attributes["my.feature.enabled"]:false". This sub-expression also supports
+// environment variables via the use of an "env." prefix as in "env.MY_ENV_VAR".
+func (p *Parser[K]) expandInterpolationExpression(
+	ctx context.Context, s string, tCtx K) (string, error) {
+	withoutSpaces := strings.TrimSpace(s)
+	var toExpand = withoutSpaces
+	var hasDefault = false
+	components := strings.SplitN(s, ":", 2)
+	var defaultValue = ""
+	if len(components) == 2 {
+		toExpand = strings.TrimSpace(components[0])
+		defaultValue = strings.TrimSpace(components[1])
+		hasDefault = true
+	}
+
+	if strings.HasPrefix(toExpand, "env.") {
+		envVarName := strings.TrimLeft("env.")
+		val, ok := os.LookupEnv(envVarName)
+		if ok {
+			return val, nil
+		}
+		if hasDefault {
+			return defaultValue, nil
+		}
+		return "", fmt.Errorf("no such environment variable: %v", envVarName)
+	}
+
+	result, err := evalSimpleStringExpression(ctx, toExpand, tCtx)
+	if err != nil && hasDefault {
+		return defaultValue, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return result, nil
+}
+
+
+// Interpolates a string, using variables/sub-expressions that are parsed according to OTTL.
+// In particular, the input string may contain various substrings of the form "${ expr }".
+// The "expr" will be parsed according to the semantics of OTTL to yield a new string with
+// these various pieces of information successfully interpolated into the resulting string.
+func (p *Parser[K]) InterpolateString(
+	ctx context.Context, s string, tCtx K) (string, error) {
+	var remaining = s
+	var output strings.Builder
+	for ; len(remaining) > 0 {
+		segments = strings.SplitN(s, "$", 2)
+		output.WriteString(segments[0])
+		if strings.HasPrefix(segments[1], "$") {
+			remaining := segments[1][1:]
+			output.WriteRune('$')
+		} else if strings.HasPrefix(segments[1], '{') {
+			remaining_segments := strings.SplitN(segments[1][1:], '}', 2)
+			if len(remaining_segments) != 2 {
+				return "", fmt.Errorf("Missing closing } in %v", s)
+			}
+			sub_expression := remaining_segments[0]
+			remaining = remaining_segments[1]
+			expansion, err := p.expandInterpolationExpression(ctx, sub_expression, tCtx)
+			if err != nil {
+				return "", err
+			}
+			output.WriteString(expansion)
+		} else {
+			return "", fmt.Errorf("Expected $ or { after $ in %v", s)
+		}
+	}
+
+	return string(output), nil
 }
 
 // ParseStatements parses string statements into ottl.Statement objects ready for execution.

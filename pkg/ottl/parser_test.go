@@ -2508,6 +2508,31 @@ func Test_ConditionSequence_Eval_Error(t *testing.T) {
 	}
 }
 
+func Test_InterpolateString_SimpleAttribute() {
+
+}
+
+func Test_InterpolateString_SimpleAttributeNotWithDefault() {
+	
+}
+
+func Test_InterpolateString_SimpleAttributeNotSetNoDefault() {
+	
+}
+
+func Test_InterpolateString_EnvVar() {
+	
+}
+
+func Test_InterpolateString_EnvVarNotSetWithDefault() {
+	
+}
+
+func Test_InterpolateString_EnvVarNotSetWithoutDefault() {
+	
+}
+
+
 type expectedSpan struct {
 	name       string
 	attributes []attribute.KeyValue

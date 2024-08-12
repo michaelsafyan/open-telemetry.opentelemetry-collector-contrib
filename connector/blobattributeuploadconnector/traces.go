@@ -302,7 +302,7 @@ func (tracesImpl *tracesToTracesImpl) interpolateSpanEvent(
 	return "", err
  }
 
- return parser.InterpolateString(ctx, se.ottlCtx)
+ return parser.InterpolateString(ctx, pattern, se.ottlCtx)
 }
 
 func (tracesImpl *tracesToTracesImpl) interpolateSpan(
@@ -314,7 +314,7 @@ func (tracesImpl *tracesToTracesImpl) interpolateSpan(
 	  return "", err
   }
 
-  return parser.InterpolateString(ctx, s.ottlCtx)
+  return parser.InterpolateString(ctx, pattern, s.ottlCtx)
 }
 
 func (tracesImpl *tracesToTracesImpl) interpolateFuncForSpanEvent(se *spanEventReference) func(context.Context, string) (string, error) {
