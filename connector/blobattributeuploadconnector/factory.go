@@ -8,6 +8,8 @@
 package blobattributeuploadconnector
 
 import (
+	"time"
+
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/connector"
 

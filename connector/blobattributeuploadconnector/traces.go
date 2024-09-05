@@ -8,7 +8,9 @@
 package blobattributeuploadconnector
 
 import (
+	"errors"
 	"fmt"
+	"time"
 	"context"
 	"hash/maphash"
 
@@ -208,7 +210,7 @@ type tracesToTracesImpl struct {
 	shutDownCompleted chan bool
 }
 
-type uploadMetadataImpl {
+type uploadMetadataImpl struct {
 	contentType string
 	labels map[string]string
 }
@@ -228,16 +230,16 @@ func (tracesImpl *tracesToTracesImpl) uploadInBackground() {
 			contentType: p.contentType,
 			labels: p.metadataLabels,
 		}
-		ctx, cancel := context.WithTimeout(ctx.Background(), tracesImpl.uploadDurationNanos)
-		err := storageBackend.Upload(ctx, p.destinationUri, p.data, metadata)
+		ctx, cancel := context.WithTimeout(context.Background(), tracesImpl.uploadDurationNanos)
+		err := p.storageBackend.Upload(ctx, p.destinationUri, p.data, metadata)
 		if err != nil {
 			tracesImpl.settings.Logger.Error(
 				"Failed to upload in background",
 				zap.String("destinationUri", p.destinationUri),
-				zap.String("dataSizeBytes", len(p.data)),
+				zap.Int("dataSizeBytes", len(p.data)),
 				zap.Duration("timeout", tracesImpl.uploadDurationNanos),
 				zap.String("contentType", p.contentType),
-				zap.NamedError("backendError", err)	
+				zap.NamedError("backendError", err),
 			)
 		}
 		defer cancel()
@@ -247,11 +249,12 @@ func (tracesImpl *tracesToTracesImpl) uploadInBackground() {
 	close(tracesImpl.shutDownCompleted)
 }
 
-func (tracesImpl *tracesToTracesImpl) Start(ctx context.Context, host Host) error {
+func (tracesImpl *tracesToTracesImpl) Start(ctx context.Context, host component.Host) error {
 	tracesImpl.settings.Logger.Debug("Starting connector...")
 	go tracesImpl.uploadInBackground()
 	tracesImpl.running = true
 	tracesImpl.settings.Logger.Debug("Connector now running.")
+	return nil
 }
 
 func (tracesImpl *tracesToTracesImpl) Shutdown(ctx context.Context) error {
@@ -293,11 +296,22 @@ func (tracesImpl *tracesToTracesImpl) shouldSampleSpanAttribute(s *spanReference
 	return tracesImpl.shouldSampleAttributeInTrace(m, s.traceID()) 
 }
 
+func (tracesImpl *tracesToTracesImpl) getTelemetrySettings() component.TelemetrySettings {
+	return component.TelemetrySettings {
+		Logger: tracesImpl.settings.Logger,
+		TracerProvider: tracesImpl.settings.TracerProvider,
+		MeterProvider: tracesImpl.settings.MeterProvider,
+		LeveledMeterProvider: tracesImpl.settings.LeveledMeterProvider,
+		MetricsLevel: tracesImpl.settings.MetricsLevel,
+		Resource: tracesImpl.settings.Resource,
+	}
+}
+
 func (tracesImpl *tracesToTracesImpl) interpolateSpanEvent(
 	ctx context.Context,
 	pattern string,
 	se *spanEventReference) (string, error) {
-  parser, err := ottlspanevent.NewParser(tracesImpl.spanEventFuncs, tracesImpl.settings)
+  parser, err := ottlspanevent.NewParser(tracesImpl.spanEventFuncs, tracesImpl.getTelemetrySettings())
  if err != nil {
 	return "", err
  }
@@ -309,7 +323,7 @@ func (tracesImpl *tracesToTracesImpl) interpolateSpan(
 	ctx context.Context,
 	pattern string,
 	s *spanReference) (string, error) {
-  parser, err := ottlspan.NewParser(tracesImpl.spanFuncs, tracesImpl.settings)
+  parser, err := ottlspan.NewParser(tracesImpl.spanFuncs, tracesImpl.getTelemetrySettings())
   if err != nil {
 	  return "", err
   }
