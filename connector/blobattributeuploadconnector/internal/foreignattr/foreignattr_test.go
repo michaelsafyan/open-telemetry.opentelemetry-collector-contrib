@@ -11,70 +11,74 @@ import (
 	"testing"
 )
 
-func TestIsForeignAttrRefDoesNotFalsePositive(t *testing.T) {
-	notForeignAttrs := []pcommon.Value{
-		pcommon.NewValueEmpty(),
-		pcommon.NewValueStr(""),
-		pcommon.NewValueStr("foo"),
-		pcommon.NewValueStr("not://a/foreign/attr/even/though/looks/like/uri"),
-		pcommon.NewValueBool(false),
-		pcommon.NewValueBool(true),
-		pcommon.NewValueInt(0),
-		pcommon.NewValueInt(1),
-		pcommon.NewValueInt(-1),
-		pcommon.NewValueInt(5),
-		pcommon.NewValueDouble(1.0),
-		pcommon.NewValueMap(),
-	}
+func TestSetInMapUriOnly(t *testing.T) {
+	f := FromURI("some://uri/string")
+	m := pcommon.NewMap()
+	f.SetInMap("somekey", m)
 
-	for _, v := range notForeignAttrs {
-		assert.False(t, IsForeignAttrRef(v))
-	}
+	uriValue, uriPresent := m.Get("somekey.ref.uri")
+	_, contentTypePresent := m.Get("somekey.ref.content_type")
+
+	assert.True(t, uriPresent)
+	assert.False(t, contentTypePresent)
+
+	assert.Equal(t, uriValue.Type(), pcommon.ValueTypeStr)
+	assert.Equal(t, uriValue.Str(), "some://uri/string")
 }
 
-func getUri(f pcommon.Value) string {
-	m := f.Map()
-	value, present := m.Get("uri")
-	if !present {
-		return ""
-	}
-	if value.Type() != pcommon.ValueTypeStr {
-		return ""
-	}
-	return value.Str()
+func TestSetInMapUriAndContentType(t *testing.T) {
+	f := FromURIWithContentType("some://uri/string", "the/type")
+
+	m := pcommon.NewMap()
+	f.SetInMap("somekey", m)
+
+	uriValue, uriPresent := m.Get("somekey.ref.uri")
+	contentTypeValue, contentTypePresent := m.Get("somekey.ref.content_type")
+
+	assert.True(t, uriPresent)
+	assert.True(t, contentTypePresent)
+
+	assert.Equal(t, uriValue.Type(), pcommon.ValueTypeStr)
+	assert.Equal(t, uriValue.Str(), "some://uri/string")
+
+	assert.Equal(t, contentTypeValue.Type(), pcommon.ValueTypeStr)
+	assert.Equal(t, contentTypeValue.Str(), "the/type")
 }
 
-func hasContentType(f pcommon.Value) bool {
-	m := f.Map()
-	_, present := m.Get("content_type")
-	return present
+func TestSetInMapReplacesExistingRefValues(t *testing.T) {
+	oldValue := FromURIWithContentType("old://uri", "old/type")
+	m := pcommon.NewMap()
+	oldValue.SetInMap("somekey", m)
+
+	f := FromURI("some://uri/string")
+	f.SetInMap("somekey", m)
+
+	uriValue, uriPresent := m.Get("somekey.ref.uri")
+	_, contentTypePresent := m.Get("somekey.ref.content_type")
+
+	assert.True(t, uriPresent)
+	assert.False(t, contentTypePresent)
+
+	assert.Equal(t, uriValue.Type(), pcommon.ValueTypeStr)
+	assert.Equal(t, uriValue.Str(), "some://uri/string")
 }
 
-func getContentType(f pcommon.Value) string {
-	m := f.Map()
-	value, present := m.Get("content_type")
-	if !present {
-		return ""
-	}
-	if value.Type() != pcommon.ValueTypeStr {
-		return ""
-	}
-	return value.Str()
-}
+func TestSetInMapDoesNotRemoveOriginalValue(t *testing.T) {
+	m := pcommon.NewMap()
+	m.PutStr("somekey", "the original value")
 
-func TestFromUri(t *testing.T) {
-	f := FromUri("some://uri/string")
-	assert.True(t, IsForeignAttrRef(f))
-	assert.Equal(t, f.Type(), pcommon.ValueTypeMap)
-	assert.Equal(t, getUri(f), "some://uri/string")
-	assert.False(t, hasContentType(f))
-}
+	f := FromURI("some://uri/string")
+	f.SetInMap("somekey", m)
 
-func TestFromUriWithContentType(t *testing.T) {
-	f := FromUriWithContentType("some://uri/string", "the/type")
-	assert.True(t, IsForeignAttrRef(f))
-	assert.Equal(t, f.Type(), pcommon.ValueTypeMap)
-	assert.Equal(t, getUri(f), "some://uri/string")
-	assert.True(t, hasContentType(f))
-	assert.Equal(t, getContentType(f), "the/type")
+	originalValue, originalPresent := m.Get("somekey")
+	uriValue, uriPresent := m.Get("somekey.ref.uri")
+
+	assert.True(t, originalPresent)
+	assert.True(t, uriPresent)
+
+	assert.Equal(t, originalValue.Type(), pcommon.ValueTypeStr)
+	assert.Equal(t, originalValue.Str(), "the original value")
+
+	assert.Equal(t, uriValue.Type(), pcommon.ValueTypeStr)
+	assert.Equal(t, uriValue.Str(), "some://uri/string")
 }

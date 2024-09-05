@@ -498,29 +498,10 @@ func (tracesImpl *tracesToTracesImpl) scheduleUpload(
   return nil
 }
 
-type foreignAttrRef struct {
-	value pcommon.Value
-}
-
-func setInMap(m pcommon.Map, key string, item *foreignAttrRef) {
-	item.value.CopyTo(m.PutEmpty(key))
-}
-
-func (tracesImpl *tracesToTracesImpl) createForeignAttr(uri string, contentType string) *foreignAttrRef {
-	if len(contentType) == 0 {
-		return &foreignAttrRef{
-			value: foreignattr.FromUri(uri),
-		}
-	}
-	return &foreignAttrRef {
-		value: foreignattr.FromUriWithContentType(uri, contentType),
-	}
-}
-
 func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanEventAttribute(
 	ctx context.Context,
 	se *spanEventReference,
-    m *matchedAttribute) (*foreignAttrRef, error) {
+    m *matchedAttribute) (foreignattr.ForeignAttrRef, error) {
 	if (!tracesImpl.shouldSampleSpanEventAttribute(se, m)) {
 		return nil, nil
 	}
@@ -567,7 +548,7 @@ func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanEventAttribute(
 		return nil, err
 	}
 
-	return tracesImpl.createForeignAttr(destinationUri, contentType), nil
+	return foreignattr.FromURIWithContentType(destinationUri, contentType), nil
 }
 
 func (tracesImpl *tracesToTracesImpl) consumeSpanEvent(ctx context.Context, se *spanEventReference) error {
@@ -600,7 +581,7 @@ func (tracesImpl *tracesToTracesImpl) consumeSpanEvent(ctx context.Context, se *
 
 		m.Remove(entry.key)
 		if newVal != nil {
-			setInMap(m, entry.key, newVal)
+			newVal.SetInMap(entry.key, m)
 		}
 	}
 
@@ -610,7 +591,7 @@ func (tracesImpl *tracesToTracesImpl) consumeSpanEvent(ctx context.Context, se *
 func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanAttribute(
 	ctx context.Context,
 	s *spanReference,
-    m *matchedAttribute) (*foreignAttrRef, error) {
+    m *matchedAttribute) (foreignattr.ForeignAttrRef, error) {
 	if (!tracesImpl.shouldSampleSpanAttribute(s, m)) {
 		return nil, nil
 	}
@@ -657,7 +638,7 @@ func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanAttribute(
 		return nil, err
 	}
 
-	return tracesImpl.createForeignAttr(destinationUri, contentType), nil
+	return foreignattr.FromURIWithContentType(destinationUri, contentType), nil
 }
 
 func (tracesImpl *tracesToTracesImpl) consumeSpanContent(ctx context.Context, s *spanReference) error {
@@ -688,7 +669,7 @@ func (tracesImpl *tracesToTracesImpl) consumeSpanContent(ctx context.Context, s 
 
 		m.Remove(entry.key)
 		if newVal != nil {
-			setInMap(m, entry.key, newVal)
+			newVal.SetInMap(entry.key, m)
 		}
 	}
 
