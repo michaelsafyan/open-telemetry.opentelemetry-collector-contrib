@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"os"
 
 	"github.com/alecthomas/participle/v2"
 	"go.opentelemetry.io/collector/component"
@@ -98,12 +100,13 @@ func WithEnumParser[K any](parser EnumParser) Option[K] {
 	return func(p *Parser[K]) {
 		p.enumParser = parser
 	}
+}
 
 // Helper of "InterpolateString" that expands a single variable without bells and whistles.
 // The input is expected to be a path to a variable that is convertible to a string.
 func (p *Parser[K]) evalSimpleStringExpression(
 	ctx context.Context, s string, tCtx K) (string, error) {
-	expr = "String(" + s + ")"
+	expr := "String(" + s + ")"
 	stmt, err := p.ParseStatement(expr)
 	if err !=  nil {
 		return "", err
@@ -114,11 +117,15 @@ func (p *Parser[K]) evalSimpleStringExpression(
 		return "", stmtErr
 	}
 	if !ok || value == nil {
-		return "", errors.New("failed to evaluate: %v", s)
+		return "", fmt.Errorf("failed to evaluate: %v", s)
 	}
 	
-	slg := value.(*ottl.StringLikeGetter[K])
-	return slg.Get(ctx, tCtx)
+	slg := value.(StringLikeGetter[K])
+	result, getErr := slg.Get(ctx, tCtx)
+	if getErr != nil {
+		return "", fmt.Errorf("failed to evaluate: %v; error: %v", s, getErr)
+	}
+	return *result, nil
 }
 
 // Helper of "InterpolateString" that expands a single sub-expression contained in
@@ -139,7 +146,7 @@ func (p *Parser[K]) expandInterpolationExpression(
 	}
 
 	if strings.HasPrefix(toExpand, "env.") {
-		envVarName := strings.TrimLeft("env.")
+		envVarName := strings.TrimLeft(toExpand, "env.")
 		val, ok := os.LookupEnv(envVarName)
 		if ok {
 			return val, nil
@@ -150,7 +157,7 @@ func (p *Parser[K]) expandInterpolationExpression(
 		return "", fmt.Errorf("no such environment variable: %v", envVarName)
 	}
 
-	result, err := evalSimpleStringExpression(ctx, toExpand, tCtx)
+	result, err := p.evalSimpleStringExpression(ctx, toExpand, tCtx)
 	if err != nil && hasDefault {
 		return defaultValue, nil
 	}
@@ -169,14 +176,14 @@ func (p *Parser[K]) InterpolateString(
 	ctx context.Context, s string, tCtx K) (string, error) {
 	var remaining = s
 	var output strings.Builder
-	for ; len(remaining) > 0 {
-		segments = strings.SplitN(s, "$", 2)
+	for len(remaining) > 0 {
+		segments := strings.SplitN(s, "$", 2)
 		output.WriteString(segments[0])
 		if strings.HasPrefix(segments[1], "$") {
-			remaining := segments[1][1:]
+			remaining = segments[1][1:]
 			output.WriteRune('$')
-		} else if strings.HasPrefix(segments[1], '{') {
-			remaining_segments := strings.SplitN(segments[1][1:], '}', 2)
+		} else if strings.HasPrefix(segments[1], "{") {
+			remaining_segments := strings.SplitN(segments[1][1:], "}", 2)
 			if len(remaining_segments) != 2 {
 				return "", fmt.Errorf("Missing closing } in %v", s)
 			}
@@ -192,7 +199,7 @@ func (p *Parser[K]) InterpolateString(
 		}
 	}
 
-	return string(output), nil
+	return output.String(), nil
 }
 
 // ParseStatements parses string statements into ottl.Statement objects ready for execution.
