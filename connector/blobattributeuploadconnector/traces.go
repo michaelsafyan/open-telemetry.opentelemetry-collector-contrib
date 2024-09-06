@@ -846,11 +846,27 @@ func createSpanEventFuncs() map[string]ottl.Factory[ottlspanevent.TransformConte
 	return ottlfuncs.StandardFuncs[ottlspanevent.TransformContext]()
 }
 
-func createTracesToTracesConnector(
+// Indirection around construction of the backend registry, used to
+// replace the registry with a mock implementation in tests.
+type backendRegistryFactory interface {
+	createRegistry() (backend.Registry, error)
+}
+
+// Default backend registry implementation that uses the real backends.
+type defaultBackendRegistryFactory struct {}
+func (d *defaultBackendRegistryFactory) createRegistry() (backend.Registry, error) {
+	return backend.NewRegistry()
+}
+
+
+// Core implementation that accepts an alternative backend factory, thereby
+// allowing for the backends to be replaced in the test code.
+func createTracesToTracesConnectorWithRegistryFactory(
 	ctx context.Context,
 	settings connector.Settings,
 	config component.Config,
-	nextConsumer consumer.Traces) (connector.Traces, error) {
+	nextConsumer consumer.Traces,
+	registryFactory backendRegistryFactory) (connector.Traces, error) {
   cfg := config.(*Config)
   if cfg.Traces == nil {
 	  settings.Logger.Info("No trace configuration found; using pass-through connector.")
@@ -859,7 +875,7 @@ func createTracesToTracesConnector(
 	  }, nil
   }
 
-  backendRegistry, backendRegistryErr := backend.NewRegistry()
+  backendRegistry, backendRegistryErr := backendRegistryFactory.createRegistry()
   if backendRegistryErr != nil {
 	  settings.Logger.Error(
 		  "Failed to construct backend registry",
@@ -903,4 +919,16 @@ func createTracesToTracesConnector(
   settings.Logger.Debug("Constructed traces-to-traces connector")
 
   return result, nil
+}
+
+
+// Called by the real implementation code in "factory.go".
+func createTracesToTracesConnector(
+	ctx context.Context,
+	settings connector.Settings,
+	config component.Config,
+	nextConsumer consumer.Traces) (connector.Traces, error) {
+  registryFactory := &defaultBackendRegistryFactory{}
+  return createTracesToTracesConnectorWithRegistryFactory(
+	  ctx, settings, config, nextConsumer, registryFactory)
 }
