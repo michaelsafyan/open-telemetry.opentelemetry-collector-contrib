@@ -875,7 +875,7 @@ func createTracesToTracesConnectorWithRegistryFactory(
 	  }, nil
   }
 
-  backendRegistry, backendRegistryErr := backendRegistryFactory.createRegistry()
+  backendRegistry, backendRegistryErr := registryFactory.createRegistry()
   if backendRegistryErr != nil {
 	  settings.Logger.Error(
 		  "Failed to construct backend registry",
