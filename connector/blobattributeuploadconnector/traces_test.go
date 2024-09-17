@@ -16,9 +16,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"go.opentelemetry.io/otel/metric"
+	noopmetric "go.opentelemetry.io/otel/metric/noop"
+	nooptrace "go.opentelemetry.io/otel/trace/noop"
+
 	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/config/configtelemetry"
 	"go.opentelemetry.io/collector/connector"
 	"go.opentelemetry.io/collector/consumer"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobattributeuploadconnector/internal/backend"
@@ -336,9 +342,15 @@ type testFixture struct {
 	t               *testing.T
 	registry        *testRegistry
 	registryFactory *testBackendRegistryFactory
+	logger          *zap.Logger
+	settings        component.TelemetrySettings
 }
 
 func newTestFixture(t *testing.T) *testFixture {
+	logger, loggerError := zap.NewDevelopment()
+	if loggerError != nil {
+		panic(loggerError)
+	}
 	registry := newTestRegistry()
 	registryFactory := newTestBackendRegistryFactory()
 	registryFactory.setBackendRegistry(registry)
@@ -346,6 +358,17 @@ func newTestFixture(t *testing.T) *testFixture {
 		t:               t,
 		registry:        registry,
 		registryFactory: registryFactory,
+		logger:          logger,
+		settings: component.TelemetrySettings{
+			Logger: logger,
+			LeveledMeterProvider: func(_ configtelemetry.Level) metric.MeterProvider {
+				return noopmetric.NewMeterProvider()
+			},
+			TracerProvider: nooptrace.NewTracerProvider(),
+			MeterProvider:  noopmetric.NewMeterProvider(),
+			MetricsLevel:   configtelemetry.LevelNone,
+			Resource:       pcommon.NewResource(),
+		},
 	}
 }
 
@@ -390,17 +413,11 @@ func (tf *testFixture) Start(yamlConfig string) (*runningConnector, error) {
 	if testConsumerAdaptorErr != nil {
 		return nil, testConsumerAdaptorErr
 	}
-	logger, loggerError := zap.NewDevelopment()
-	if loggerError != nil {
-		return nil, loggerError
-	}
 	connectorResult, connectorErr := factory.CreateTracesToTraces(
 		context.Background(),
 		connector.Settings{
-			ID: component.MustNewIDWithName("blobattributeuploadconnector", tf.t.Name()),
-			TelemetrySettings: component.TelemetrySettings{
-				Logger: logger,
-			},
+			ID:                component.MustNewIDWithName("blobattributeuploadconnector", tf.t.Name()),
+			TelemetrySettings: tf.settings,
 		},
 		config,
 		testConsumerAdaptor)

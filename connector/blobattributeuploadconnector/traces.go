@@ -225,24 +225,29 @@ func (u *uploadMetadataImpl) Labels() map[string]string {
 
 func (tracesImpl *tracesToTracesImpl) uploadInBackground() {
 	tracesImpl.settings.Logger.Debug("Background uploader thread now running.")
+	var cleanupFuncs = make([]func(), 0)
 	for p := range tracesImpl.pendingUploadChannel {
 		metadata := &uploadMetadataImpl{
 			contentType: p.contentType,
 			labels: p.metadataLabels,
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), tracesImpl.uploadDurationNanos)
-		err := p.storageBackend.Upload(ctx, p.destinationUri, p.data, metadata)
+		cleanupFuncs = append(cleanupFuncs, cancel)
+		err := p.storageBackend.Upload(ctx, p.destinationURI, p.data, metadata)
 		if err != nil {
 			tracesImpl.settings.Logger.Error(
 				"Failed to upload in background",
-				zap.String("destinationUri", p.destinationUri),
+				zap.String("destinationURI", p.destinationURI),
 				zap.Int("dataSizeBytes", len(p.data)),
 				zap.Duration("timeout", tracesImpl.uploadDurationNanos),
 				zap.String("contentType", p.contentType),
 				zap.NamedError("backendError", err),
 			)
 		}
-		defer cancel()
+	}
+
+	for _, cleanup := range cleanupFuncs {
+		cleanup()
 	}
 
 	tracesImpl.shutDownCompleted <- true
@@ -278,7 +283,7 @@ func (tracesImpl *tracesToTracesImpl) shouldSampleAttributeInTrace(m *matchedAtt
 	if m.rule.Action.Sampling == nil {
 		return true
 	}
-	if m.rule.Action.Sampling.Enabled == false {
+	if !m.rule.Action.Sampling.Enabled {
 		return true
 	}
 
@@ -297,14 +302,7 @@ func (tracesImpl *tracesToTracesImpl) shouldSampleSpanAttribute(s *spanReference
 }
 
 func (tracesImpl *tracesToTracesImpl) getTelemetrySettings() component.TelemetrySettings {
-	return component.TelemetrySettings {
-		Logger: tracesImpl.settings.Logger,
-		TracerProvider: tracesImpl.settings.TracerProvider,
-		MeterProvider: tracesImpl.settings.MeterProvider,
-		LeveledMeterProvider: tracesImpl.settings.LeveledMeterProvider,
-		MetricsLevel: tracesImpl.settings.MetricsLevel,
-		Resource: tracesImpl.settings.Resource,
-	}
+	return tracesImpl.settings.TelemetrySettings
 }
 
 func (tracesImpl *tracesToTracesImpl) interpolateSpanEvent(
@@ -402,7 +400,7 @@ func (tracesImpl *tracesToTracesImpl) computeContentTypeCommon(
  uploadCfg := m.rule.Action.Upload
  contentTypeCfg := uploadCfg.ContentType
  if contentTypeCfg == nil ||
-    ((contentTypeCfg != nil ) && (contentTypeCfg.Automatic != nil) && (contentTypeCfg.Automatic.Enabled)) {
+    ((contentTypeCfg.Automatic != nil) && (contentTypeCfg.Automatic.Enabled)) {
    return contenttype.DeduceContentType(uri, data)
  }
 
@@ -500,7 +498,7 @@ type pendingUpload struct {
 	storageBackend backend.BlobStorageBackend
 	key string
 	data []byte
-	destinationUri string
+	destinationURI string
 	contentType string
 	metadataLabels map[string]string
 }
@@ -508,6 +506,9 @@ type pendingUpload struct {
 func (tracesImpl *tracesToTracesImpl) scheduleUpload(
 	ctx context.Context,
 	pending *pendingUpload) error {
+  if !tracesImpl.running {
+	  return errors.New("Cannot upload further to the channel; shutting down.")
+  }
   tracesImpl.pendingUploadChannel <- pending
   return nil
 }
@@ -520,21 +521,21 @@ func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanEventAttribute(
 		return nil, nil
 	}
 
-	destinationUri, destinationUriErr := tracesImpl.computeDestinationUriForSpanEvent(ctx, se, m)
-	if destinationUriErr != nil {
+	destinationURI, destinationURIErr := tracesImpl.computeDestinationUriForSpanEvent(ctx, se, m)
+	if destinationURIErr != nil {
 		tracesImpl.settings.Logger.Error(
 			"Could not create destination URI for span event attribute",
 			zap.String("attributeKey", m.key),
 			zap.String("configRuleName", m.rule.Name),
-		    zap.NamedError("error", destinationUriErr))
-		return nil, destinationUriErr
+		    zap.NamedError("error", destinationURIErr))
+		return nil, destinationURIErr
 	}
 
-	b, berr := tracesImpl.backendRegistry.GetBackendForURI(destinationUri)
+	b, berr := tracesImpl.backendRegistry.GetBackendForURI(destinationURI)
 	if berr != nil {
 		tracesImpl.settings.Logger.Error(
 			"Could not find suitable storage backend for destination URI",
-			zap.String("destinationUri", destinationUri),
+			zap.String("destinationURI", destinationURI),
 		    zap.NamedError("error", berr))
 		return nil, berr
 	}
@@ -544,7 +545,7 @@ func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanEventAttribute(
 		return nil, derr
 	}
 
-	contentType, contentTypeErr := tracesImpl.computeContentTypeForSpanEventAttribute(ctx, se, m, destinationUri, d)
+	contentType, contentTypeErr := tracesImpl.computeContentTypeForSpanEventAttribute(ctx, se, m, destinationURI, d)
 	if contentTypeErr != nil {
 		return nil, contentTypeErr
 	}
@@ -553,7 +554,7 @@ func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanEventAttribute(
 		storageBackend: b,
 		key: m.key,
 		data: d,
-		destinationUri: destinationUri,
+		destinationURI: destinationURI,
 		contentType: contentType,
 	}
 
@@ -562,7 +563,7 @@ func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanEventAttribute(
 		return nil, err
 	}
 
-	return foreignattr.FromURIWithContentType(destinationUri, contentType), nil
+	return foreignattr.FromURIWithContentType(destinationURI, contentType), nil
 }
 
 func (tracesImpl *tracesToTracesImpl) consumeSpanEvent(ctx context.Context, se *spanEventReference) error {
@@ -610,21 +611,21 @@ func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanAttribute(
 		return nil, nil
 	}
 
-	destinationUri, destinationUriErr := tracesImpl.computeDestinationUriForSpan(ctx, s, m)
-	if destinationUriErr != nil {
+	destinationURI, destinationURIErr := tracesImpl.computeDestinationUriForSpan(ctx, s, m)
+	if destinationURIErr != nil {
 		tracesImpl.settings.Logger.Error(
 			"Could not create destination URI for span attribute",
 			zap.String("attributeKey", m.key),
 			zap.String("configRuleName", m.rule.Name),
-		    zap.NamedError("error", destinationUriErr))
-		return nil, destinationUriErr
+		    zap.NamedError("error", destinationURIErr))
+		return nil, destinationURIErr
 	}
 
-	b, berr := tracesImpl.backendRegistry.GetBackendForURI(destinationUri)
+	b, berr := tracesImpl.backendRegistry.GetBackendForURI(destinationURI)
 	if berr != nil {
 		tracesImpl.settings.Logger.Error(
 			"Could not find suitable storage backend for destination URI",
-			zap.String("destinationUri", destinationUri),
+			zap.String("destinationURI", destinationURI),
 		    zap.NamedError("error", berr))
 		return nil, berr
 	}
@@ -634,7 +635,7 @@ func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanAttribute(
 		return nil, derr
 	}
 
-	contentType, contentTypeErr := tracesImpl.computeContentTypeForSpanAttribute(ctx, s, m, destinationUri, d)
+	contentType, contentTypeErr := tracesImpl.computeContentTypeForSpanAttribute(ctx, s, m, destinationURI, d)
 	if contentTypeErr != nil {
 		return nil, contentTypeErr
 	}
@@ -643,7 +644,7 @@ func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanAttribute(
 		storageBackend: b,
 		key: m.key,
 		data: d,
-		destinationUri: destinationUri,
+		destinationURI: destinationURI,
 		contentType: contentType,
 	}
 
@@ -652,7 +653,7 @@ func (tracesImpl *tracesToTracesImpl) processSingleMatchedSpanAttribute(
 		return nil, err
 	}
 
-	return foreignattr.FromURIWithContentType(destinationUri, contentType), nil
+	return foreignattr.FromURIWithContentType(destinationURI, contentType), nil
 }
 
 func (tracesImpl *tracesToTracesImpl) consumeSpanContent(ctx context.Context, s *spanReference) error {
