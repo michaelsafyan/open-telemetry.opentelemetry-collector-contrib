@@ -9,6 +9,8 @@ package blobattributeuploadconnector
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -69,22 +71,29 @@ type backendUploadCall struct {
 
 // Implementation of "BlobStorageBackend" that records calls.
 type testBlobStorageBackend struct {
-	calls  []*backendUploadCall
-	result error
-	mutex  sync.Mutex
+	calls   []*backendUploadCall
+	waiters []func()
+	result  error
+	mutex   sync.Mutex
 }
 
 // From "BlobStorageBackend"
 func (tbsb *testBlobStorageBackend) Upload(ctx context.Context, uri string, data []byte, metadata backend.UploadMetadata) error {
 	tbsb.mutex.Lock()
-	defer tbsb.mutex.Unlock()
-
+	result := tbsb.result
+	oldWaiters := tbsb.waiters
+	tbsb.waiters = make([]func(), 0)
 	tbsb.calls = append(tbsb.calls, &backendUploadCall{
 		uri:      uri,
 		data:     data,
 		metadata: copyMetadata(metadata),
 	})
-	return tbsb.result
+	tbsb.mutex.Unlock()
+
+	for _, waiter := range oldWaiters {
+		waiter()
+	}
+	return result
 }
 
 func (tbsb *testBlobStorageBackend) callCount() int {
@@ -115,11 +124,34 @@ func (tbsb *testBlobStorageBackend) setResult(e error) {
 	tbsb.result = e
 }
 
+func (tbsb *testBlobStorageBackend) calledAtLeast(n int) func(*testBlobStorageBackend) bool {
+	return func(inner *testBlobStorageBackend) bool {
+		return inner.callCount() >= n
+	}
+}
+
+func (tbsb *testBlobStorageBackend) waitUntil(pred func(*testBlobStorageBackend) bool) error {
+	for !pred(tbsb) {
+		wg := &sync.WaitGroup{}
+		wg.Add(1)
+		waitFunc := func() { wg.Done() }
+		tbsb.mutex.Lock()
+		tbsb.waiters = append(tbsb.waiters, waitFunc)
+		tbsb.mutex.Unlock()
+		if pred(tbsb) {
+			return nil
+		}
+		wg.Wait()
+	}
+	return nil
+}
+
 // Instantiates the test backend.
 func newTestBackend() *testBlobStorageBackend {
 	return &testBlobStorageBackend{
-		calls:  make([]*backendUploadCall, 0),
-		result: nil,
+		calls:   make([]*backendUploadCall, 0),
+		waiters: make([]func(), 0),
+		result:  nil,
 	}
 }
 
@@ -402,10 +434,24 @@ func (rc *runningConnector) Stop() {
 	rc.tracesToTraces.Shutdown(context.Background())
 }
 
+// Helper to triangulate problems with YAML
+func prettyPrintYAMLWithError(s string, e error) {
+	fmt.Printf("\n\n****** YAML Error ******\n\n%v\n\n", e)
+	fmt.Printf("****** YAML Content ******\n\n")
+	lines := strings.Split(s, "\n")
+	for index, line := range lines {
+		with_tabs_highlighted := strings.ReplaceAll(line, "\t", "[[!!TAB!!]]")
+		line_number := index + 1
+		fmt.Printf("    %3d  %v\n", line_number, with_tabs_highlighted)
+	}
+	fmt.Printf("\n\n")
+}
+
 func (tf *testFixture) Start(yamlConfig string) (*runningConnector, error) {
 	factory := tf.createConnectorFactory()
 	config := factory.CreateDefaultConfig()
 	if err := yaml.Unmarshal([]byte(yamlConfig), &config); err != nil {
+		prettyPrintYAMLWithError(yamlConfig, err)
 		return nil, err
 	}
 	testConsumer := newTestTracesConsumer()
@@ -444,6 +490,143 @@ func TestActsAsPassThroughWithoutTraceConfig(t *testing.T) {
 	fixture := newTestFixture(t)
 	fixture.registry.setResult(backend)
 	running, err := fixture.Start("")
+	assert.NoError(t, err)
+	defer running.Stop()
+
+	data := ptrace.NewTraces()
+	assert.NoError(t, running.ConsumeTraces(ctx, data))
+	assert.NoError(t, running.testConsumer.waitUntil(running.testConsumer.calledAtLeast(1)))
+
+	assert.False(t, backend.wasCalled())
+	assert.False(t, fixture.registry.wasCalled())
+	assert.True(t, running.testConsumer.wasCalled())
+	assert.Equal(t, data, running.testConsumer.lastCall())
+}
+
+func TestUploadsSpanAttributes(t *testing.T) {
+	config := `
+traces:
+  attributes:
+  rules:
+  - name: http_requests
+    match:
+     key: http.request.body.content
+    action:
+     upload:
+      destination_uri: mybackend://mybucket/${span.trace_id}/${span.span_id}/request.json
+      content_type: application/json
+`
+	ctx := context.Background()
+	backend := newTestBackend()
+	fixture := newTestFixture(t)
+	fixture.registry.setResult(backend)
+	running, err := fixture.Start(config)
+	assert.NoError(t, err)
+	defer running.Stop()
+
+	data := ptrace.NewTraces()
+	resourceSpans := data.ResourceSpans().AppendEmpty()
+	scopeSpans := resourceSpans.ScopeSpans().AppendEmpty()
+	span := scopeSpans.Spans().AppendEmpty()
+	testTraceID := pcommon.TraceID([16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16})
+	testSpanID := pcommon.SpanID([8]byte{8, 7, 6, 5, 4, 3, 2, 1})
+	span.SetName("testspan")
+	span.SetTraceID(testTraceID)
+	span.SetSpanID(testSpanID)
+	span.SetStartTimestamp(pcommon.Timestamp(1))
+	span.SetEndTimestamp(pcommon.Timestamp(2))
+	attributes := span.Attributes()
+	attributes.PutStr("unchanged", "somevalue")
+	attributes.PutStr("http.request.body.content", "{\"hello\": \"world\"}")
+
+	assert.NoError(t, running.ConsumeTraces(ctx, data))
+	assert.NoError(t, running.testConsumer.waitUntil(running.testConsumer.calledAtLeast(1)))
+	assert.NoError(t, backend.waitUntil(backend.calledAtLeast(1)))
+
+	assert.True(t, backend.wasCalled())
+	assert.True(t, fixture.registry.wasCalled())
+	assert.True(t, running.testConsumer.wasCalled())
+
+	// Verify that the attribute value got uploaded as expected.
+	uploadCall := backend.lastCall()
+	assert.Equal(t, uploadCall.uri, "mybackend://mybucket/hex/hex/request.json")
+	assert.Equal(t, uploadCall.data, []byte("{\"hello\": \"world\"}"))
+
+	// Verify that no spans were added or removed.
+	outputTraces := running.testConsumer.lastCall()
+	outputResourceSpans := outputTraces.ResourceSpans()
+	assert.Equal(t, outputResourceSpans.Len(), 1)
+	outputResourceSpan := outputResourceSpans.At(0)
+	outputScopeSpans := outputResourceSpan.ScopeSpans()
+	assert.Equal(t, outputScopeSpans.Len(), 1)
+	outputScopeSpan := outputScopeSpans.At(0)
+	outputSpans := outputScopeSpan.Spans()
+	assert.Equal(t, outputSpans.Len(), 1)
+	outputSpan := outputSpans.At(0)
+
+	// Verify that non-matching attributes were unchanged.
+	outputAttributes := outputSpan.Attributes()
+	unchangedVal, unchangedPresent := outputAttributes.Get("unchanged")
+	assert.True(t, unchangedPresent)
+	assert.Equal(t, unchangedVal, "somevalue")
+
+	// Verify that other properties of the span are unchanged.
+	assert.Equal(t, outputSpan.Name(), "testspan")
+	assert.Equal(t, outputSpan.TraceID(), testTraceID)
+	assert.Equal(t, outputSpan.SpanID(), testSpanID)
+	assert.Equal(t, outputSpan.StartTimestamp(), span.StartTimestamp())
+	assert.Equal(t, outputSpan.EndTimestamp(), span.EndTimestamp())
+
+	// Verify that the replaced attribute is not present
+	_, uploadedAttributePresent := outputAttributes.Get("http.request.body.content")
+	assert.False(t, uploadedAttributePresent)
+
+	// Verify that attributes for the URI and content type were added
+	uriAttrValue, uriAttrPresent := outputAttributes.Get("http.request.body.content.ref.uri")
+	typeAttrValue, typeAttrPresent := outputAttributes.Get("http.request.body.content.ref.content_type")
+	assert.True(t, uriAttrPresent)
+	assert.True(t, typeAttrPresent)
+	assert.Equal(t, typeAttrValue.Str(), "application/json")
+	assert.Equal(t, uriAttrValue.Str(), "mybackend://mybucket/hex/hex/request.json")
+}
+
+func TestUploadsSpanEventAttributes(t *testing.T) {
+	config := `
+traces:
+	events:
+	groups:
+		- name: genai_prompts
+		  event_name:
+			match_if_any_equal_to:
+			- gen_ai.content.prompt
+		  attributes:
+			rules:
+			- name: genai_prompt_attribute
+			match:
+				key: gen_ai.prompt
+				action:
+				upload:
+					destination_uri: mybackend://mybucket/${span.trace_id}/${span.span_id}/${event_index}/prompt.txt
+					content_type: text/plain
+		- name: genai_responses
+		  event_name:
+			match_if_any_equal_to:
+			- gen_ai.content.completion
+		  attributes:
+			rules:
+			- name: genai_response_attribute
+			match:
+				key: gen_ai.completion
+				action:
+				upload:
+					destination_uri: mybackend://mybucket/${span.trace_id}/${span.span_id}/${event_index}/response.json
+					content_type: application/json
+`
+	ctx := context.Background()
+	backend := newTestBackend()
+	fixture := newTestFixture(t)
+	fixture.registry.setResult(backend)
+	running, err := fixture.Start(config)
 	assert.NoError(t, err)
 	defer running.Stop()
 
