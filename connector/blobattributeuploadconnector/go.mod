@@ -3,6 +3,7 @@ module github.com/open-telemetry/opentelemetry-collector-contrib/connector/bloba
 go 1.23
 
 require (
+	github.com/mitchellh/mapstructure v1.5.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/ottl v0.108.0
 	github.com/stretchr/testify v1.9.0
 	go.opentelemetry.io/collector/component v0.108.1

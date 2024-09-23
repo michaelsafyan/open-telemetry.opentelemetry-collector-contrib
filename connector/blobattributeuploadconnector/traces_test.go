@@ -18,6 +18,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/mitchellh/mapstructure"
 	"github.com/stretchr/testify/assert"
 
 	"go.opentelemetry.io/otel/metric"
@@ -520,12 +521,26 @@ func prettyPrintYAMLWithError(s string, e error) {
 	fmt.Printf("\n\n")
 }
 
+// Helper to load the YAML content into the Config object
+func yamlToConfig(s string, out *Config) error {
+	rawParsedConfig := make(map[string]interface{})
+	if err := yaml.Unmarshal([]byte(s), rawParsedConfig); err != nil {
+		prettyPrintYAMLWithError(s, err)
+		return err
+	}
+	if err := mapstructure.Decode(rawParsedConfig, out); err != nil {
+		prettyPrintYAMLWithError(s, err)
+		fmt.Printf("****** Parsed Content ******\n\n%v\n\n", rawParsedConfig)
+		return err
+	}
+	return nil
+}
+
 func (tf *testFixture) Start(yamlConfig string) (*runningConnector, error) {
 	factory := tf.createConnectorFactory()
 	cfg := factory.CreateDefaultConfig()
 	config := cfg.(*Config)
-	if err := yaml.Unmarshal([]byte(yamlConfig), config); err != nil {
-		prettyPrintYAMLWithError(yamlConfig, err)
+	if err := yamlToConfig(yamlConfig, config); err != nil {
 		return nil, err
 	}
 	validationErr := componenttest.CheckConfigStruct(config)
@@ -594,7 +609,8 @@ traces:
       action:
        upload:
         destination_uri: mybackend://mybucket/${span.trace_id}/${span.span_id}/request.json
-        content_type: application/json
+        content_type:
+          static_value: application/json
 `
 	ctx := context.Background()
 	backend := newTestBackend()
@@ -690,7 +706,8 @@ traces:
 				action:
 				upload:
 					destination_uri: mybackend://mybucket/${span.trace_id}/${span.span_id}/${event_index}/prompt.txt
-					content_type: text/plain
+					content_type:
+                      static_value: text/plain
 		- name: genai_responses
 		  event_name:
 			match_if_any_equal_to:
@@ -703,7 +720,8 @@ traces:
 				action:
 				upload:
 					destination_uri: mybackend://mybucket/${span.trace_id}/${span.span_id}/${event_index}/response.json
-					content_type: application/json
+					content_type:
+                      static_value: application/json
 `
 	ctx := context.Background()
 	backend := newTestBackend()
