@@ -9,10 +9,12 @@ package blobattributeuploadconnector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -23,6 +25,7 @@ import (
 	nooptrace "go.opentelemetry.io/otel/trace/noop"
 
 	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/config/configtelemetry"
 	"go.opentelemetry.io/collector/connector"
 	"go.opentelemetry.io/collector/consumer"
@@ -34,6 +37,30 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// -------------------------------------------------------
+// Miscellaneous helpers
+// -------------------------------------------------------
+
+func isDeadlineExceeded(ctx context.Context) bool {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return false
+	}
+
+	currentTime := time.Now()
+	diff := currentTime.Compare(deadline)
+	return diff >= 0
+}
+
+func wakeUpAfter(ctx context.Context) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return 60 * time.Second
+	}
+	currentTime := time.Now()
+	return deadline.Sub(currentTime)
+}
 
 // -------------------------------------------------------
 // Mocking "backend.Registry", "backend.BlobStorageBackend"
@@ -90,10 +117,28 @@ func (tbsb *testBlobStorageBackend) Upload(ctx context.Context, uri string, data
 	})
 	tbsb.mutex.Unlock()
 
+	fmt.Print("testBlobStorageBackend: updated; notifying waiters\n")
 	for _, waiter := range oldWaiters {
 		waiter()
 	}
 	return result
+}
+
+// Used to prevent tests from hanging indefinitely when waiting
+func (tbsb *testBlobStorageBackend) notifyAfter(t time.Duration) {
+	go func() {
+		time.Sleep(t)
+		tbsb.notifyAll()
+	}()
+}
+func (tbsb *testBlobStorageBackend) notifyAll() {
+	tbsb.mutex.Lock()
+	oldWaiters := tbsb.waiters
+	tbsb.waiters = make([]func(), 0)
+	tbsb.mutex.Unlock()
+	for _, waiter := range oldWaiters {
+		waiter()
+	}
 }
 
 func (tbsb *testBlobStorageBackend) callCount() int {
@@ -130,8 +175,11 @@ func (tbsb *testBlobStorageBackend) calledAtLeast(n int) func(*testBlobStorageBa
 	}
 }
 
-func (tbsb *testBlobStorageBackend) waitUntil(pred func(*testBlobStorageBackend) bool) error {
+func (tbsb *testBlobStorageBackend) waitUntil(ctx context.Context, pred func(*testBlobStorageBackend) bool) error {
 	for !pred(tbsb) {
+		if isDeadlineExceeded(ctx) {
+			return errors.New("Deadline exceeded.")
+		}
 		wg := &sync.WaitGroup{}
 		wg.Add(1)
 		waitFunc := func() { wg.Done() }
@@ -141,6 +189,8 @@ func (tbsb *testBlobStorageBackend) waitUntil(pred func(*testBlobStorageBackend)
 		if pred(tbsb) {
 			return nil
 		}
+		fmt.Print("testBlobStorageBackend: waiting for condition\n")
+		tbsb.notifyAfter(wakeUpAfter(ctx))
 		wg.Wait()
 	}
 	return nil
@@ -302,10 +352,28 @@ func (tc *testTracesConsumer) ConsumeTraces(ctx context.Context, td ptrace.Trace
 	tc.waiters = make([]func(), 0)
 	tc.mutex.Unlock()
 
+	fmt.Print("testTracesConsumer: updated; notifying waiters\n")
 	for _, waiter := range oldWaiters {
 		waiter()
 	}
 	return result
+}
+
+// Used to prevent hanging indefinitely when waiting for a condition
+func (tc *testTracesConsumer) notifyAfter(t time.Duration) {
+	go func() {
+		time.Sleep(t)
+		tc.notifyAll()
+	}()
+}
+func (tc *testTracesConsumer) notifyAll() {
+	tc.mutex.Lock()
+	oldWaiters := tc.waiters
+	tc.waiters = make([]func(), 0)
+	tc.mutex.Unlock()
+	for _, waiter := range oldWaiters {
+		waiter()
+	}
 }
 
 func (tc *testTracesConsumer) setResult(e error) {
@@ -342,8 +410,11 @@ func (tc *testTracesConsumer) calledAtLeast(n int) func(*testTracesConsumer) boo
 	}
 }
 
-func (tc *testTracesConsumer) waitUntil(pred func(*testTracesConsumer) bool) error {
+func (tc *testTracesConsumer) waitUntil(ctx context.Context, pred func(*testTracesConsumer) bool) error {
 	for !pred(tc) {
+		if isDeadlineExceeded(ctx) {
+			return errors.New("Deadline exceeded.")
+		}
 		wg := &sync.WaitGroup{}
 		wg.Add(1)
 		waitFunc := func() { wg.Done() }
@@ -353,6 +424,8 @@ func (tc *testTracesConsumer) waitUntil(pred func(*testTracesConsumer) bool) err
 		if pred(tc) {
 			return nil
 		}
+		fmt.Print("testTracesConsumer: waiting for condition\n")
+		tc.notifyAfter(wakeUpAfter(ctx))
 		wg.Wait()
 	}
 	return nil
@@ -449,10 +522,15 @@ func prettyPrintYAMLWithError(s string, e error) {
 
 func (tf *testFixture) Start(yamlConfig string) (*runningConnector, error) {
 	factory := tf.createConnectorFactory()
-	config := factory.CreateDefaultConfig()
-	if err := yaml.Unmarshal([]byte(yamlConfig), &config); err != nil {
+	cfg := factory.CreateDefaultConfig()
+	config := cfg.(*Config)
+	if err := yaml.Unmarshal([]byte(yamlConfig), config); err != nil {
 		prettyPrintYAMLWithError(yamlConfig, err)
 		return nil, err
+	}
+	validationErr := componenttest.CheckConfigStruct(config)
+	if validationErr != nil {
+		return nil, validationErr
 	}
 	testConsumer := newTestTracesConsumer()
 	testConsumerAdaptor, testConsumerAdaptorErr := testConsumer.toConsumer()
@@ -495,7 +573,9 @@ func TestActsAsPassThroughWithoutTraceConfig(t *testing.T) {
 
 	data := ptrace.NewTraces()
 	assert.NoError(t, running.ConsumeTraces(ctx, data))
-	assert.NoError(t, running.testConsumer.waitUntil(running.testConsumer.calledAtLeast(1)))
+	waitCtx, waitCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer waitCancel()
+	assert.NoError(t, running.testConsumer.waitUntil(waitCtx, running.testConsumer.calledAtLeast(1)))
 
 	assert.False(t, backend.wasCalled())
 	assert.False(t, fixture.registry.wasCalled())
@@ -507,14 +587,14 @@ func TestUploadsSpanAttributes(t *testing.T) {
 	config := `
 traces:
   attributes:
-  rules:
-  - name: http_requests
-    match:
-     key: http.request.body.content
-    action:
-     upload:
-      destination_uri: mybackend://mybucket/${span.trace_id}/${span.span_id}/request.json
-      content_type: application/json
+    rules:
+    - name: http_requests
+      match:
+       key: http.request.body.content
+      action:
+       upload:
+        destination_uri: mybackend://mybucket/${span.trace_id}/${span.span_id}/request.json
+        content_type: application/json
 `
 	ctx := context.Background()
 	backend := newTestBackend()
@@ -540,8 +620,11 @@ traces:
 	attributes.PutStr("http.request.body.content", "{\"hello\": \"world\"}")
 
 	assert.NoError(t, running.ConsumeTraces(ctx, data))
-	assert.NoError(t, running.testConsumer.waitUntil(running.testConsumer.calledAtLeast(1)))
-	assert.NoError(t, backend.waitUntil(backend.calledAtLeast(1)))
+
+	waitCtx, waitCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer waitCancel()
+	assert.NoError(t, running.testConsumer.waitUntil(waitCtx, running.testConsumer.calledAtLeast(1)))
+	assert.NoError(t, backend.waitUntil(waitCtx, backend.calledAtLeast(1)))
 
 	assert.True(t, backend.wasCalled())
 	assert.True(t, fixture.registry.wasCalled())
@@ -632,7 +715,9 @@ traces:
 
 	data := ptrace.NewTraces()
 	assert.NoError(t, running.ConsumeTraces(ctx, data))
-	assert.NoError(t, running.testConsumer.waitUntil(running.testConsumer.calledAtLeast(1)))
+	waitCtx, waitCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer waitCancel()
+	assert.NoError(t, running.testConsumer.waitUntil(waitCtx, running.testConsumer.calledAtLeast(1)))
 
 	assert.False(t, backend.wasCalled())
 	assert.False(t, fixture.registry.wasCalled())

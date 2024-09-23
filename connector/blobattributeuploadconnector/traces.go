@@ -224,24 +224,46 @@ func (u *uploadMetadataImpl) Labels() map[string]string {
 }
 
 func (tracesImpl *tracesToTracesImpl) uploadInBackground() {
-	tracesImpl.settings.Logger.Debug("Background uploader thread now running.")
+	tracesImpl.settings.Logger.Debug("[uploadInBackground] Background uploader thread now running.")
 	var cleanupFuncs = make([]func(), 0)
 	for p := range tracesImpl.pendingUploadChannel {
+		tracesImpl.settings.Logger.Debug(
+			"[uploadInBackground] Received pending upload",
+			zap.String("key", p.key),
+			zap.Int("dataSizeBytes", len(p.data)),
+			zap.String("destinationURI", p.destinationURI))
 		metadata := &uploadMetadataImpl{
 			contentType: p.contentType,
 			labels: p.metadataLabels,
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), tracesImpl.uploadDurationNanos)
 		cleanupFuncs = append(cleanupFuncs, cancel)
+
+
+		tracesImpl.settings.Logger.Debug(
+			"[uploadInBackground] Starting pending upload",
+			zap.String("key", p.key),
+			zap.Int("dataSizeBytes", len(p.data)),
+			zap.String("destinationURI", p.destinationURI))
 		err := p.storageBackend.Upload(ctx, p.destinationURI, p.data, metadata)
 		if err != nil {
 			tracesImpl.settings.Logger.Error(
-				"Failed to upload in background",
+				"[uploadInBackground] Failed to upload in background",
+				zap.String("key", p.key),
 				zap.String("destinationURI", p.destinationURI),
 				zap.Int("dataSizeBytes", len(p.data)),
 				zap.Duration("timeout", tracesImpl.uploadDurationNanos),
 				zap.String("contentType", p.contentType),
 				zap.NamedError("backendError", err),
+			)
+		} else {
+			tracesImpl.settings.Logger.Debug(
+				"[uploadInBackground] Completed upload",
+				zap.String("key", p.key),
+				zap.String("destinationURI", p.destinationURI),
+				zap.Int("dataSizeBytes", len(p.data)),
+				zap.Duration("timeout", tracesImpl.uploadDurationNanos),
+				zap.String("contentType", p.contentType),
 			)
 		}
 	}
@@ -278,19 +300,39 @@ func (tracesImpl *tracesToTracesImpl) Shutdown(ctx context.Context) error {
 
 func (tracesImpl *tracesToTracesImpl) shouldSampleAttributeInTrace(m *matchedAttribute, traceID pcommon.TraceID) bool {
 	if m.rule.Action == nil  {
+		tracesImpl.settings.Logger.Debug(
+			"[shouldSampleAttributeInTrace] should sample: false -- no action.",
+			zap.String("key", m.key),
+		    zap.String("rule", m.rule.Name))
 		return false
 	}
 	if m.rule.Action.Sampling == nil {
+		tracesImpl.settings.Logger.Debug(
+			"[shouldSampleAttributeInTrace] should sample: true -- no sample config.",
+			zap.String("key", m.key),
+		    zap.String("rule", m.rule.Name))
 		return true
 	}
 	if !m.rule.Action.Sampling.Enabled {
+		tracesImpl.settings.Logger.Debug(
+			"[shouldSampleAttributeInTrace] should sample: true -- sampling disabled.",
+			zap.String("key", m.key),
+			zap.String("rule", m.rule.Name))
 		return true
 	}
 
 	samplePercent := m.rule.Action.Sampling.Percent
 	hashVal := maphash.Bytes(tracesImpl.seed, []byte(traceID[:]))
 	mod100 := int(hashVal % 100)
-	return mod100 < samplePercent
+	result := mod100 < samplePercent
+	tracesImpl.settings.Logger.Debug(
+		"[shouldSampleAttributeInTrace] sampling decision made",
+		zap.String("key", m.key),
+		zap.String("rule", m.rule.Name),
+		zap.Bool("shouldSample", result),
+		zap.Int("samplePercent", samplePercent),
+		zap.Int("randomHashMod100", mod100))
+	return result
 }
 
 func (tracesImpl *tracesToTracesImpl) shouldSampleSpanEventAttribute(se *spanEventReference, m *matchedAttribute) bool {
@@ -509,6 +551,11 @@ func (tracesImpl *tracesToTracesImpl) scheduleUpload(
   if !tracesImpl.running {
 	  return errors.New("Cannot upload further to the channel; shutting down.")
   }
+  tracesImpl.settings.Logger.Debug(
+	  "[scheduleUpload] Queing pending upload.",
+	  zap.String("key", pending.key),
+	  zap.Int("dataSizeBytes", len(pending.data)),
+	  zap.String("destinationURI", pending.destinationURI))
   tracesImpl.pendingUploadChannel <- pending
   return nil
 }
@@ -692,10 +739,14 @@ func (tracesImpl *tracesToTracesImpl) consumeSpanContent(ctx context.Context, s 
 }
 
 func (tracesImpl *tracesToTracesImpl) consumeSpan(ctx context.Context, s *spanReference) error {
+	tracesImpl.settings.Logger.Debug(
+		"[consumeSpan] Processing span",
+		zap.String("traceID", s.span.TraceID().String()),
+		zap.String("spanID", s.span.SpanID().String()))
 	for i := 0; i < s.span.Events().Len(); i++ {
 		event := s.span.Events().At(i)
 		tracesImpl.settings.Logger.Debug(
-			"Processing span event",
+			"[consumeSpan] Processing span event",
 			zap.String("traceID", s.span.TraceID().String()),
 			zap.String("spanID", s.span.SpanID().String()),
 			zap.Int("eventIndex", i),
@@ -745,7 +796,7 @@ func (tracesImpl *tracesToTracesImpl) ConsumeTraces(ctx context.Context, td ptra
 			for k := 0; k < scopeSpan.Spans().Len(); k++ {
 				span := scopeSpan.Spans().At(k)
 				tracesImpl.settings.Logger.Debug(
-					"Processing span",
+					"[ConsumeTraces] Processing span",
 					zap.Int("resouceIndex", i),
 					zap.Int("scopeIndex", j),
 					zap.Int("spanIndex", k),
@@ -768,36 +819,43 @@ func (tracesImpl *tracesToTracesImpl) ConsumeTraces(ctx context.Context, td ptra
 		}
 	}
 
-	tracesImpl.settings.Logger.Debug("Forwarding processed batch to downstream consumer")
+	tracesImpl.settings.Logger.Debug("[ConsumeTraces] Forwarding processed batch to downstream consumer")
 	return tracesImpl.nextConsumer.ConsumeTraces(ctx, td)
 }
 
-func spanAttributesFromConfig(cfg *Config) (*attributeRuleMap, error) {
+func spanAttributesFromConfig(logger *zap.Logger, cfg *Config) (*attributeRuleMap, error) {
 	result := newAttributeRuleMap()
 
 	tracesCfg := cfg.Traces
 	if tracesCfg == nil {
+		logger.Debug("[spanAttributesConfig] No traces config found.")
 		return result, nil
 	}
 
 	attributeCfg := tracesCfg.AttributeConfig
 	if attributeCfg == nil {
+		logger.Debug("[spanAttributesConfig] 'traces' config missing 'attributes' config.")
 		return result, nil
 	}
 
 	for _, rule := range attributeCfg.Rule {
+		logger.Debug("[spanAttributesConfig] Processing span attributes config rule",
+	                 zap.String("ruleName", rule.Name))
 		matchCfg := rule.Match
 		if matchCfg == nil {
+			logger.Debug(
+				"[spanAttributeConfig] Missing 'match' stanza in rule",
+			    zap.String("ruleName", rule.Name))
 			return nil, fmt.Errorf("missing 'match' in rule %v", rule.Name)
 		}
 
 		locations := matchCfg.Locations
-		if len(locations) == 0 {
-			return nil, fmt.Errorf("missing 'locations' in rule %v", rule.Name)
-		}
-
 		for _, location := range locations {
 			if location != "span" {
+				logger.Debug(
+					"[spanAttributeConfig] Unsupported 'locations' entry in rule",
+					zap.String("ruleName", rule.Name),
+				    zap.String("location", location))
 				return nil, fmt.Errorf(
 					"in rule %v: unsupported location: %v; only 'span' supported for now", rule.Name, location)
 			}
@@ -812,20 +870,25 @@ func spanAttributesFromConfig(cfg *Config) (*attributeRuleMap, error) {
 	return result, nil
 }
 
-func spanEventAttributesFromConfig(cfg *Config) (*eventAttributeRules, error) {
+func spanEventAttributesFromConfig(logger *zap.Logger, cfg *Config) (*eventAttributeRules, error) {
 	result := newEventAttributeRules()
 
 	tracesCfg := cfg.Traces
 	if tracesCfg == nil {
+		logger.Debug("[spanEventAttributesFromConfig] No 'traces' config found.")
 		return result, nil
 	}
 
 	eventsCfg := tracesCfg.SpanEventsConfig
 	if eventsCfg == nil {
+		logger.Debug("[spanEventAttributesFromConfig] No 'events' config in the 'traces' config.")
 		return result, nil	
 	}
 
 	for _, group := range eventsCfg.Groups {
+		logger.Debug(
+			"[spanEventAttributesFromConfig] Found span event group",
+			zap.String("groupName", group.Name))
 		err := result.add(group)
 		if err != nil {
 			return nil, err
@@ -869,6 +932,9 @@ func createTracesToTracesConnectorWithRegistryFactory(
 	nextConsumer consumer.Traces,
 	registryFactory backendRegistryFactory) (connector.Traces, error) {
   cfg := config.(*Config)
+  settings.Logger.Debug(
+	  "Creating traces-to-traces blobattributeuploaderconnector.",
+	  zap.Any("config", config))
   if cfg.Traces == nil {
 	  settings.Logger.Info("No trace configuration found; using pass-through connector.")
 	  return &passThroughTracesConnector{
@@ -885,23 +951,27 @@ func createTracesToTracesConnectorWithRegistryFactory(
   }
   settings.Logger.Debug("Constructed backend registry")
 
-  spanAttributes, spanAttributesErr := spanAttributesFromConfig(cfg)
+  spanAttributes, spanAttributesErr := spanAttributesFromConfig(settings.Logger, cfg)
   if spanAttributesErr != nil {
 	  settings.Logger.Error(
 		  "Failed to gather span attribute configuration",
 		  zap.NamedError("error", spanAttributesErr))
 	  return nil, spanAttributesErr
   }
-  settings.Logger.Debug("Collected span attribute configuration")
+  settings.Logger.Debug(
+	  "Collected span attribute configuration",
+      zap.Any("spanAttributes", spanAttributes))
 
-  spanEvents, spanEventsErr := spanEventAttributesFromConfig(cfg)
+  spanEvents, spanEventsErr := spanEventAttributesFromConfig(settings.Logger, cfg)
   if spanEventsErr != nil {
 	settings.Logger.Error(
 		"Failed to gather span event attribute configuration",
 		zap.NamedError("error", spanEventsErr))
 	  return nil, spanEventsErr
   }
-  settings.Logger.Debug("Collected span event attribute configuration")
+  settings.Logger.Debug(
+	  "Collected span event attribute configuration",
+	  zap.Any("spanEvents", spanEvents))
 
   result := &tracesToTracesImpl{
 	  settings: settings,
