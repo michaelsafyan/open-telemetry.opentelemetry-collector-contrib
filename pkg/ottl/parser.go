@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"os"
 
@@ -107,25 +108,30 @@ func WithEnumParser[K any](parser EnumParser) Option[K] {
 func (p *Parser[K]) evalSimpleStringExpression(
 	ctx context.Context, s string, tCtx K) (string, error) {
 	expr := "String(" + s + ")"
-	stmt, err := p.ParseStatement(expr)
-	if err !=  nil {
-		return "", err
+	parsed, parseErr := parser.ParseString("", expr)
+	if parseErr != nil {
+		return "", parseErr
 	}
 
-	value, ok, stmtErr := stmt.Execute(ctx, tCtx)
-	if stmtErr != nil {
-		return "", stmtErr
+	converter := parsed.Converter
+	if converter == nil {
+		return "", fmt.Errorf("Expected non-nil converter when parsing: %v", expr)
 	}
-	if !ok || value == nil {
-		return "", fmt.Errorf("failed to evaluate: %v", s)
+	getter, getterErr := p.newGetterFromConverter(*converter)
+    if getterErr != nil {
+		return "", getterErr
 	}
 	
-	slg := value.(StringLikeGetter[K])
-	result, getErr := slg.Get(ctx, tCtx)
-	if getErr != nil {
-		return "", fmt.Errorf("failed to evaluate: %v; error: %v", s, getErr)
+	result, resultErr := getter.Get(ctx, tCtx)
+	if resultErr != nil {
+		return "", resultErr
 	}
-	return *result, nil
+	if result == nil {
+		return "", fmt.Errorf("expression [%v] expanded to nil", s)
+	}
+
+	v := reflect.ValueOf(result)
+	return v.String(), nil
 }
 
 // Helper of "InterpolateString" that expands a single sub-expression contained in
@@ -177,12 +183,21 @@ func (p *Parser[K]) InterpolateString(
 	var remaining = s
 	var output strings.Builder
 	for len(remaining) > 0 {
-		segments := strings.SplitN(s, "$", 2)
+		segments := strings.SplitN(remaining, "$", 2)
 		output.WriteString(segments[0])
+		if (len(segments) == 1) {
+			// Nothing was separated with "$". This means
+			// that segments[0] == remaining, and everything was written.
+			remaining = ""
+			break
+		}
+
 		if strings.HasPrefix(segments[1], "$") {
+			// This was a case of a double-escape "$$"
 			remaining = segments[1][1:]
 			output.WriteRune('$')
 		} else if strings.HasPrefix(segments[1], "{") {
+			// This was the case of "${ ... }" with something to expand
 			remaining_segments := strings.SplitN(segments[1][1:], "}", 2)
 			if len(remaining_segments) != 2 {
 				return "", fmt.Errorf("Missing closing } in %v", s)
@@ -195,6 +210,8 @@ func (p *Parser[K]) InterpolateString(
 			}
 			output.WriteString(expansion)
 		} else {
+			// In the future, we might allow "$FOO" rather than "${FOO}"; however,
+			// for now, let's disallow this syntax and mandate explicit braces.
 			return "", fmt.Errorf("Expected $ or { after $ in %v", s)
 		}
 	}
