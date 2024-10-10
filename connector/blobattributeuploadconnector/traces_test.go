@@ -126,12 +126,21 @@ func (tbsb *testBlobStorageBackend) Upload(ctx context.Context, uri string, data
 }
 
 // Used to prevent tests from hanging indefinitely when waiting
-func (tbsb *testBlobStorageBackend) notifyAfter(t time.Duration) {
-	go func() {
-		time.Sleep(t)
-		tbsb.notifyAll()
-	}()
+func (tbsb *testBlobStorageBackend) notifyAfter(t time.Duration) func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func(ctx context.Context) {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(t):
+				tbsb.notifyAll()
+			}
+		}
+	}(ctx)
+	return cancel
 }
+
 func (tbsb *testBlobStorageBackend) notifyAll() {
 	tbsb.mutex.Lock()
 	oldWaiters := tbsb.waiters
@@ -191,8 +200,9 @@ func (tbsb *testBlobStorageBackend) waitUntil(ctx context.Context, pred func(*te
 			return nil
 		}
 		fmt.Print("testBlobStorageBackend: waiting for condition\n")
-		tbsb.notifyAfter(wakeUpAfter(ctx))
+		cancelNotifyAfter := tbsb.notifyAfter(wakeUpAfter(ctx))
 		wg.Wait()
+		cancelNotifyAfter()
 	}
 	return nil
 }
@@ -361,11 +371,19 @@ func (tc *testTracesConsumer) ConsumeTraces(ctx context.Context, td ptrace.Trace
 }
 
 // Used to prevent hanging indefinitely when waiting for a condition
-func (tc *testTracesConsumer) notifyAfter(t time.Duration) {
-	go func() {
-		time.Sleep(t)
-		tc.notifyAll()
-	}()
+func (tc *testTracesConsumer) notifyAfter(t time.Duration) func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func(ctx context.Context) {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(t):
+				tc.notifyAll()
+			}
+		}
+	}(ctx)
+	return cancel
 }
 func (tc *testTracesConsumer) notifyAll() {
 	tc.mutex.Lock()
@@ -426,8 +444,9 @@ func (tc *testTracesConsumer) waitUntil(ctx context.Context, pred func(*testTrac
 			return nil
 		}
 		fmt.Print("testTracesConsumer: waiting for condition\n")
-		tc.notifyAfter(wakeUpAfter(ctx))
+		cancelNotifyAfter := tc.notifyAfter(wakeUpAfter(ctx))
 		wg.Wait()
+		cancelNotifyAfter()
 	}
 	return nil
 }
@@ -598,6 +617,12 @@ func TestActsAsPassThroughWithoutTraceConfig(t *testing.T) {
 	assert.Equal(t, data, running.testConsumer.lastCall())
 }
 
+// NOTE: The attribute "http.request.body.content" is not blessed by OTel Semantic Conventions,
+// and OTel Semantic Conventions recommend putting large content like this in events rather than
+// in span attributes. However, the goal of this test is not to specify how users SHOULD model
+// data but rather to provide a semi-realistic test to verify the correctness. This example
+// is based on a vendor-specific attribute that does not follow established OTel conventions
+// to prove functionality/capability of this component, not to suggest it as a best practice.
 func TestUploadsSpanAttributes(t *testing.T) {
 	config := `
 traces:
@@ -608,7 +633,7 @@ traces:
        key: http.request.body.content
       action:
        upload:
-        destination_uri: mybackend://mybucket/${span.trace_id}/${span.span_id}/request.json
+        destination_uri: mybackend://mybucket/${trace_id.string}/${span_id.string}/request.json
         content_type:
           static_value: application/json
 `
@@ -648,7 +673,7 @@ traces:
 
 	// Verify that the attribute value got uploaded as expected.
 	uploadCall := backend.lastCall()
-	assert.Equal(t, uploadCall.uri, "mybackend://mybucket/hex/hex/request.json")
+	assert.Equal(t, uploadCall.uri, "mybackend://mybucket/0102030405060708090a0b0c0d0e0f10/0807060504030201/request.json")
 	assert.Equal(t, uploadCall.data, []byte("{\"hello\": \"world\"}"))
 
 	// Verify that no spans were added or removed.
@@ -667,7 +692,7 @@ traces:
 	outputAttributes := outputSpan.Attributes()
 	unchangedVal, unchangedPresent := outputAttributes.Get("unchanged")
 	assert.True(t, unchangedPresent)
-	assert.Equal(t, unchangedVal, "somevalue")
+	assert.Equal(t, unchangedVal.Str(), "somevalue")
 
 	// Verify that other properties of the span are unchanged.
 	assert.Equal(t, outputSpan.Name(), "testspan")
@@ -686,42 +711,48 @@ traces:
 	assert.True(t, uriAttrPresent)
 	assert.True(t, typeAttrPresent)
 	assert.Equal(t, typeAttrValue.Str(), "application/json")
-	assert.Equal(t, uriAttrValue.Str(), "mybackend://mybucket/hex/hex/request.json")
+	assert.Equal(t, uriAttrValue.Str(), "mybackend://mybucket/0102030405060708090a0b0c0d0e0f10/0807060504030201/request.json")
 }
 
+// NOTE: This test corresponds to an experimental representation of LLM prompt/responses in
+// OTel Semantic Conventions that is being replaced with a new representation based on events
+// (not span events). New LLM code should target the direction of OTel Semantic Conventions
+// of using the events signal rather than span events. The goal of this test is not to
+// determine the correct data model for LLM data, but rather to provide a semi-realistic
+// production scenario that proves that the uploader connector works correctly.
 func TestUploadsSpanEventAttributes(t *testing.T) {
 	config := `
 traces:
-	events:
-	groups:
-		- name: genai_prompts
-		  event_name:
-			match_if_any_equal_to:
-			- gen_ai.content.prompt
-		  attributes:
-			rules:
-			- name: genai_prompt_attribute
-			match:
-				key: gen_ai.prompt
-				action:
-				upload:
-					destination_uri: mybackend://mybucket/${span.trace_id}/${span.span_id}/${event_index}/prompt.txt
-					content_type:
-                      static_value: text/plain
-		- name: genai_responses
-		  event_name:
-			match_if_any_equal_to:
-			- gen_ai.content.completion
-		  attributes:
-			rules:
-			- name: genai_response_attribute
-			match:
-				key: gen_ai.completion
-				action:
-				upload:
-					destination_uri: mybackend://mybucket/${span.trace_id}/${span.span_id}/${event_index}/response.json
-					content_type:
-                      static_value: application/json
+  events:
+    groups:
+        - name: genai_prompts
+          event_name:
+            match_if_any_equal_to:
+            - gen_ai.content.prompt
+          attributes:
+            rules:
+            - name: genai_prompt_attribute
+              match:
+                key: gen_ai.prompt
+              action:
+                upload:
+                  destination_uri: mybackend://mybucket/${span.trace_id.string}/${span.span_id.string}/${event_index}/prompt.txt
+                  content_type:
+                    static_value: text/plain
+        - name: genai_responses
+          event_name:
+            match_if_any_equal_to:
+            - gen_ai.content.completion
+          attributes:
+            rules:
+            - name: genai_response_attribute
+              match:
+                key: gen_ai.completion
+              action:
+                upload:
+                  destination_uri: mybackend://mybucket/${span.trace_id.string}/${span.span_id.string}/${event_index}/response.json
+                  content_type:
+                     static_value: application/json
 `
 	ctx := context.Background()
 	backend := newTestBackend()
@@ -732,13 +763,72 @@ traces:
 	defer running.Stop()
 
 	data := ptrace.NewTraces()
+	resourceSpans := data.ResourceSpans().AppendEmpty()
+	scopeSpans := resourceSpans.ScopeSpans().AppendEmpty()
+	span := scopeSpans.Spans().AppendEmpty()
+	testTraceID := pcommon.TraceID([16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16})
+	testSpanID := pcommon.SpanID([8]byte{8, 7, 6, 5, 4, 3, 2, 1})
+	span.SetName("testspan")
+	span.SetTraceID(testTraceID)
+	span.SetSpanID(testSpanID)
+	span.SetStartTimestamp(pcommon.Timestamp(1))
+	span.SetEndTimestamp(pcommon.Timestamp(2))
+	attributes := span.Attributes()
+	attributes.PutStr("unchanged", "somevalue")
+	promptEvent := span.Events().AppendEmpty()
+	promptEvent.SetName("gen_ai.content.prompt")
+	promptEventAttrs := promptEvent.Attributes()
+	promptEventAttrs.PutStr("gen_ai.prompt", "The prompt to replace")
+	promptEventAttrs.PutStr("other.attr", "unchanged")
+
+	responseEvent := span.Events().AppendEmpty()
+	responseEvent.SetName("gen_ai.content.completion")
+	responseEventAttrs := responseEvent.Attributes()
+	responseEventAttrs.PutStr("gen_ai.completion", "The response to replace")
+	responseEventAttrs.PutStr("other.attr", "unchanged")
+
 	assert.NoError(t, running.ConsumeTraces(ctx, data))
 	waitCtx, waitCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer waitCancel()
 	assert.NoError(t, running.testConsumer.waitUntil(waitCtx, running.testConsumer.calledAtLeast(1)))
+	assert.NoError(t, backend.waitUntil(waitCtx, backend.calledAtLeast(2)))
 
-	assert.False(t, backend.wasCalled())
-	assert.False(t, fixture.registry.wasCalled())
+	assert.True(t, backend.wasCalled())
+	assert.True(t, fixture.registry.wasCalled())
 	assert.True(t, running.testConsumer.wasCalled())
-	assert.Equal(t, data, running.testConsumer.lastCall())
+
+	rewrittenData := running.testConsumer.lastCall()
+	rewrittenSpan := rewrittenData.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	rewrittenPromptEvent := rewrittenSpan.Events().At(0)
+	rewrittenResponseEvent := rewrittenSpan.Events().At(1)
+
+	assert.Equal(t, rewrittenPromptEvent.Name(), "gen_ai.content.prompt")
+	assert.Equal(t, rewrittenResponseEvent.Name(), "gen_ai.content.completion")
+
+	rpa := rewrittenPromptEvent.Attributes()
+	rra := rewrittenResponseEvent.Attributes()
+
+	_, rpaOldOk := rpa.Get("gen_ai.prompt")
+	rpaUri, rpaUriOk := rpa.Get("gen_ai.prompt.ref.uri")
+	rpaUnchanged, rpaUnchangedOk := rpa.Get("other.attr")
+	assert.False(t, rpaOldOk)
+	assert.True(t, rpaUriOk)
+	assert.Equal(t, rpaUri.Str(), "mybackend://mybucket/0102030405060708090a0b0c0d0e0f10/0807060504030201/0/prompt.txt")
+	assert.True(t, rpaUnchangedOk)
+	assert.Equal(t, rpaUnchanged.Str(), "unchanged")
+
+	_, rraOldOk := rra.Get("gen_ai.completion")
+	rraUri, rraUriOk := rra.Get("gen_ai.completion.ref.uri")
+	rraUnchanged, rraUnchangedOk := rra.Get("other.attr")
+	assert.False(t, rraOldOk)
+	assert.True(t, rraUriOk)
+	assert.Equal(t, rraUri.Str(), "mybackend://mybucket/0102030405060708090a0b0c0d0e0f10/0807060504030201/1/response.json")
+	assert.True(t, rraUnchangedOk)
+	assert.Equal(t, rraUnchanged.Str(), "unchanged")
+
+	assert.Equal(t, backend.getCall(0).uri, "mybackend://mybucket/0102030405060708090a0b0c0d0e0f10/0807060504030201/0/prompt.txt")
+	assert.Equal(t, backend.getCall(0).data, []byte("The prompt to replace"))
+
+	assert.Equal(t, backend.getCall(1).uri, "mybackend://mybucket/0102030405060708090a0b0c0d0e0f10/0807060504030201/1/response.json")
+	assert.Equal(t, backend.getCall(1).data, []byte("The response to replace"))
 }

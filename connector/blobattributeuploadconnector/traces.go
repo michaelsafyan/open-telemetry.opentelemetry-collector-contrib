@@ -10,6 +10,7 @@ package blobattributeuploadconnector
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 	"context"
 	"hash/maphash"
@@ -82,6 +83,18 @@ func newAttributeRuleMap() *attributeRuleMap {
 }
 
 func (arm *attributeRuleMap) add(acr *AttributeConfigRule) error {
+	if acr == nil {
+		return errors.New("Must supply a non-nil AttributeConfigRule")
+	}
+	if acr.Match == nil {
+		return fmt.Errorf("Attribute config rule %v is missing a required 'match' configuration.", acr.Name)
+	}
+	if acr.Match.Key == "" {
+		return fmt.Errorf("The match spec in attribute config rule %v is missing a non-empty 'key'.", acr.Name)
+	}
+	if arm.attributeNameToRule == nil {
+		arm.attributeNameToRule = make(map[string]*AttributeConfigRule)
+	}
 	existing, present := arm.attributeNameToRule[acr.Match.Key]
 	if present {
 		return fmt.Errorf("rule %v conflicts with existing rule %v; both match on attribute %v",
@@ -129,7 +142,7 @@ func (ear *eventAttributeRules) add(secg *SpanEventsConfigGroup) error {
 			} else {
 				newMap := newAttributeRuleMap()
 				ear.eventNameToRuleMap[name] = newMap
-				mapsToUpdate = append(mapsToUpdate, existing)
+				mapsToUpdate = append(mapsToUpdate, newMap)
 			}
 		}
 	}
@@ -285,7 +298,7 @@ func (tracesImpl *tracesToTracesImpl) Start(ctx context.Context, host component.
 }
 
 func (tracesImpl *tracesToTracesImpl) Shutdown(ctx context.Context) error {
-	tracesImpl.settings.Logger.Debug("Shutting own the connector...")
+	tracesImpl.settings.Logger.Debug("Shutting down the connector...")
 	tracesImpl.running = false
 	close(tracesImpl.pendingUploadChannel)
 	for shutDownCompleted := range tracesImpl.shutDownCompleted {
@@ -347,7 +360,7 @@ func (tracesImpl *tracesToTracesImpl) getTelemetrySettings() component.Telemetry
 	return tracesImpl.settings.TelemetrySettings
 }
 
-func (tracesImpl *tracesToTracesImpl) interpolateSpanEvent(
+func (tracesImpl *tracesToTracesImpl) interpolateSpanEventWithOttl(
 	ctx context.Context,
 	pattern string,
 	se *spanEventReference) (string, error) {
@@ -357,6 +370,15 @@ func (tracesImpl *tracesToTracesImpl) interpolateSpanEvent(
  }
 
  return parser.InterpolateString(ctx, pattern, se.ottlCtx)
+}
+
+func (tracesImpl *tracesToTracesImpl) interpolateSpanEvent(
+	ctx context.Context,
+	pattern string,
+	se *spanEventReference) (string, error) {
+  // TODO: eliminate this rewriting when OTTL context for span event supports all of the required fields.
+  updatedPattern := strings.ReplaceAll(pattern, "${event_index}", fmt.Sprintf("%v", se.index))
+  return tracesImpl.interpolateSpanEventWithOttl(ctx, updatedPattern, se)
 }
 
 func (tracesImpl *tracesToTracesImpl) interpolateSpan(
@@ -743,6 +765,8 @@ func (tracesImpl *tracesToTracesImpl) consumeSpan(ctx context.Context, s *spanRe
 		"[consumeSpan] Processing span",
 		zap.String("traceID", s.span.TraceID().String()),
 		zap.String("spanID", s.span.SpanID().String()))
+	updatedEvents := ptrace.NewSpanEventSlice()
+	updatedEvents.EnsureCapacity(s.span.Events().Len())
 	for i := 0; i < s.span.Events().Len(); i++ {
 		event := s.span.Events().At(i)
 		tracesImpl.settings.Logger.Debug(
@@ -767,7 +791,9 @@ func (tracesImpl *tracesToTracesImpl) consumeSpan(ctx context.Context, s *spanRe
 		if err := tracesImpl.consumeSpanEvent(ctx, ref); err != nil {
 			return err
 		}
+		ref.event.MoveTo(updatedEvents.AppendEmpty())
 	}
+	updatedEvents.CopyTo(s.span.Events())
 	return tracesImpl.consumeSpanContent(ctx, s)
 }
 
@@ -932,6 +958,10 @@ func createTracesToTracesConnectorWithRegistryFactory(
 	nextConsumer consumer.Traces,
 	registryFactory backendRegistryFactory) (connector.Traces, error) {
   cfg := config.(*Config)
+  validationErr := cfg.Validate()
+  if validationErr != nil {
+	  return nil, validationErr
+  }
   settings.Logger.Debug(
 	  "Creating traces-to-traces blobattributeuploaderconnector.",
 	  zap.Any("config", config))
