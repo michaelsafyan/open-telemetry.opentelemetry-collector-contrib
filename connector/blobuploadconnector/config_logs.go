@@ -8,6 +8,11 @@
 // that relate to the logs signal type.
 package blobuploadconnector
 
+import (
+	"errors"
+	"fmt"
+)
+
 // "LogsConfig" defines how this connector should handle the logs signal type.
 type LogsConfig struct {
 	// Rules that apply to different groups of logs.
@@ -95,14 +100,14 @@ type LogAttributesMatcher struct {
 
 // Used to match an attribute value.
 type LogsAttributeValueMatcher struct {
-	StringValue *LogsStringAttriubteValueMatcher `mapstructure:"string_value"`
+	StringValue *LogsStringAttributeValueMatcher `mapstructure:"string_value"`
 
 	// Any fields which did not fall into the defined structure.
 	UnknownFields map[string]interface{} `mapstructure:",remain"`
 }
 
 // Used to match a string-valued attribute value.
-type LogsStringAttriubteValueMatcher struct {
+type LogsStringAttributeValueMatcher struct {
 	Equals     *string `mapstructure:"equals"`
 	StartsWith *string `mapstructure:"starts_with"`
 	EndsWith   *string `mapstructure:"ends_with"`
@@ -132,8 +137,8 @@ type LogsAttributeConfig struct {
 
 // "LogsBodyConfigRule" describes a field path in the body to target.
 type LogBodyConfigRule struct {
-    // The name of this rule.
-    Name string `mapstructure:"name"`
+	// The name of this rule.
+	Name string `mapstructure:"name"`
 
 	// Describes what portion of the log body to match.
 	Match *LogBodyMatchConfig `mapstructure:"match"`
@@ -149,4 +154,91 @@ type LogBodyConfigRule struct {
 type LogBodyMatchConfig struct {
 	// Specifies a JMESPath query to indicate which fields to target.
 	JMESPath string `mapstructure:"jmespath"`
+}
+
+func (lc *LogsConfig) Validate() error {
+	for _, group := range lc.Groups {
+		if err := group.Validate(); err != nil {
+			return err
+		}
+	}
+	if err := errorIfUnknown(lc.UnknownFields); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (lcg *LogsConfigGroup) Validate() error {
+	if len(lcg.Name) == 0 {
+		return errors.New("Must specify 'name' in LogsConfigGroup")
+	}
+	if lcg.MatchConfig != nil {
+		if err := lcg.MatchConfig.Validate(); err != nil {
+			return err
+		}
+	}
+	if lcg.BodyConfig != nil {
+		if err := lcg.BodyConfig.Validate(); err != nil {
+			return err
+		}
+	}
+	if lcg.AttributeConfig != nil {
+		if err := lcg.AttributeConfig.Validate(); err != nil {
+			return err
+		}
+	}
+	if err := errorIfUnknown(lcg.UnknownFields); err != nil {
+		return err
+	}
+
+	if lcg.BodyConfig == nil && lcg.AttributeConfig == nil {
+		return fmt.Errorf("Must specify 'attributes' or 'body' in log config group '%v'.", lcg.Name)
+	}
+
+	return nil
+}
+
+func (*LogsMatchConfig) Validate() error {
+	// TODO: implement
+	return nil
+}
+
+func (*LogSeverityMatcher) Validate() error {
+	// TODO: implement
+	return nil
+}
+
+func (*LogAttributesMatcher) Validate() error {
+	// TODO: implement
+	return nil
+}
+
+func (*LogsAttributeValueMatcher) Validate() error {
+	// TODO: implement
+	return nil
+}
+
+func (*LogsStringAttributeValueMatcher) Validate() error {
+	// TODO: implement
+	return nil
+}
+
+func (*LogsBodyConfig) Validate() error {
+	// TODO: implement
+	return nil
+}
+
+func (*LogsAttributeConfig) Validate() error {
+	// TODO: implement
+	return nil
+}
+
+func (*LogBodyConfigRule) Validate() error {
+	// TODO: implement
+	return nil
+}
+
+func (*LogBodyMatchConfig) Validate() error {
+	// TODO: implement
+	return nil
 }

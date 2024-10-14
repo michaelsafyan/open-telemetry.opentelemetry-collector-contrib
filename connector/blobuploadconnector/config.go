@@ -171,6 +171,11 @@ func (c *Config) Validate() error {
 			return err
 		}
 	}
+	if c.Logs != nil {
+		if err := c.Logs.Validate(); err != nil {
+			return err
+		}
+	}
 	if err := errorIfUnknown(c.UnknownFields); err != nil {
 		return err
 	}
