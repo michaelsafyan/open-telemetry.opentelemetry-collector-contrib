@@ -1,4 +1,4 @@
-module github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobattributeuploadconnector
+module github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobuploadconnector
 
 go 1.23
 

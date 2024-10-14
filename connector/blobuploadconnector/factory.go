@@ -5,7 +5,7 @@
 // certain specified attributes to a blob storage backend.
 //
 // The file "factory.go" file provides the logic that creates the connector.
-package blobattributeuploadconnector
+package blobuploadconnector
 
 import (
 	"time"
@@ -13,7 +13,7 @@ import (
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/connector"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobattributeuploadconnector/internal/metadata"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobuploadconnector/internal/metadata"
 )
 
 func createDefaultConfig() component.Config {

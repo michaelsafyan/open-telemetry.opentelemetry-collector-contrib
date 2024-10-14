@@ -1,5 +1,5 @@
-type: blobattributeuploadconnector
-scope_name: otelcol/blobattributeuploadconnector
+type: blobuploadconnector
+scope_name: otelcol/blobuploadconnector
 
 status:
   class: connector

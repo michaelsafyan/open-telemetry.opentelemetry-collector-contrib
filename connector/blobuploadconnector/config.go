@@ -5,7 +5,7 @@
 // certain specified attributes to a blob storage backend.
 //
 // The file "config.go" manages interaction with config options.
-package blobattributeuploadconnector
+package blobuploadconnector
 
 import (
 	"errors"

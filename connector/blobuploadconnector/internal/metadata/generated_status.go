@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	Type = component.MustNewType("blobattributeuploadconnector")
+	Type = component.MustNewType("blobuploadconnector")
 )
 
 const (

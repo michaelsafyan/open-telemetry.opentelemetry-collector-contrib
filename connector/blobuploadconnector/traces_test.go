@@ -5,7 +5,7 @@
 // certain specified attributes to a blob storage backend.
 //
 // The file "traces_test.go" validates the "traces.go" file.
-package blobattributeuploadconnector
+package blobuploadconnector
 
 import (
 	"context"
@@ -33,8 +33,8 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobattributeuploadconnector/internal/backend"
-	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobattributeuploadconnector/internal/metadata"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobuploadconnector/internal/backend"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobuploadconnector/internal/metadata"
 
 	"gopkg.in/yaml.v3"
 )

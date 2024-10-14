@@ -1,11 +1,11 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package "blobattributeuploadconnector" provides a connector that writes
+// Package "blobuploadconnector" provides a connector that writes
 // certain specified attributes to a blob storage backend.
 //
 // The file "traces.go" file provides the logic for the traces signal type.
-package blobattributeuploadconnector
+package blobuploadconnector
 
 import (
 	"errors"
@@ -28,10 +28,10 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/ottl/contexts/ottlspanevent"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/ottl/ottlfuncs"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobattributeuploadconnector/internal/backend"
-	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobattributeuploadconnector/internal/contenttype"
-	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobattributeuploadconnector/internal/foreignattr"
-	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobattributeuploadconnector/internal/payload"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobuploadconnector/internal/backend"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobuploadconnector/internal/contenttype"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobuploadconnector/internal/foreignattr"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/connector/blobuploadconnector/internal/payload"
 )
 
 type passThroughTracesConnector struct {
