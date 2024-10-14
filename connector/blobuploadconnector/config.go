@@ -25,6 +25,9 @@ type Config struct {
 	// Configuration regarding how this should apply to the traces signal.
 	Traces *TracesConfig `mapstructure:"traces"`
 
+	// Configuration regarding how this should apply to the logs signal.
+	Logs *LogsConfig `mapstructure:"logs"`
+
 	// Any fields which did not fall into the defined structure.
 	UnknownFields map[string]interface{} `mapstructure:",remain"`
 }

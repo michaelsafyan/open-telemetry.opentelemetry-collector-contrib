@@ -1,4 +1,38 @@
 blobuploadconnector:
+  # How to rewrite logs.
+  logs:
+    groups:
+    - name: body_example
+      match:
+        attributes:
+        - key: foo
+          value:
+            string_value:
+              equals: bar
+      body:
+        rules:
+        - name: upload_subfield_baz_qux
+          match:
+            jmespath: baz.qux
+          action:
+            upload:
+              destination_uri: s3://${env.S3_BUCKET_NAME}/logs/body/${attributes["blah"]}
+    - name: attribute_example
+      match:
+        attributes:
+        - key: to_upload
+        - key: baz
+          value:
+            string_value:
+              equals: qux
+      attributes:
+        rules:
+        - name: upload_attribute_to_upload
+          match:
+            key: to_upload
+          action:
+            upload:
+              destination_uri: s3://${env.S3_BUCKET_NAME}/logs/body/${attributes["blahblah"]}
   # How to rewrite span attributes.
   traces:
     attributes:
