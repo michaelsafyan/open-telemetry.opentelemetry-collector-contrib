@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package "blobuploadconnector" provides a connector that writes
-// certain specified attributes to a blob storage backend.
+// certain specified attributes/fields to a blob storage backend.
 //
 // The file "traces.go" file provides the logic for the traces signal type.
 package blobuploadconnector

@@ -1,8 +1,8 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package "blobattributeuploadconnector" provides a connector that writes
-// certain specified attributes to a blob storage backend.
+// Package "blobuploadconnector" provides a connector that writes
+// certain specified attributes/fields to a blob storage backend.
 //
 // The file "traces_test.go" validates the "traces.go" file.
 package blobuploadconnector
