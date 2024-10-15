@@ -45,25 +45,9 @@ type LogsConfigGroup struct {
 
 // Used to match/identify an entire log or set of logs.
 type LogsMatchConfig struct {
-	// Restricts the match to the specified severities. If omitted,
-	// then any severity value will be matched.
-	Severity *LogSeverityMatcher `mapstructure:"severity"`
-
 	// Restricts the match to the specified combination of attributes.
 	// If omitted, then logs with any attributes will be matched.
 	Attributes []*LogAttributesMatcher `mapstructure:"attributes"`
-
-	// Any fields which did not fall into the defined structure.
-	UnknownFields map[string]interface{} `mapstructure:",remain"`
-}
-
-// Used to filter logs to a specific range of severities.
-type LogSeverityMatcher struct {
-	// If set, severity must be at least this value (inclusive).
-	MinSeverity string `mapstructure:"min"`
-
-	// If set, severity must be at most this value (inclusive).
-	MaxSeverity string `mapstructure:"max"`
 
 	// Any fields which did not fall into the defined structure.
 	UnknownFields map[string]interface{} `mapstructure:",remain"`
@@ -154,6 +138,9 @@ type LogBodyConfigRule struct {
 type LogBodyMatchConfig struct {
 	// Specifies a JMESPath query to indicate which fields to target.
 	JMESPath string `mapstructure:"jmespath"`
+
+	// Any fields which did not fall into the defined structure.
+	UnknownFields map[string]interface{} `mapstructure:",remain"`
 }
 
 func (lc *LogsConfig) Validate() error {
@@ -195,50 +182,141 @@ func (lcg *LogsConfigGroup) Validate() error {
 		return fmt.Errorf("Must specify 'attributes' or 'body' in log config group '%v'.", lcg.Name)
 	}
 
+	if err := errorIfUnknown(lcg.UnknownFields); err != nil {
+		return err
+	}
+
 	return nil
 }
 
-func (*LogsMatchConfig) Validate() error {
-	// TODO: implement
+func (lmc *LogsMatchConfig) Validate() error {
+	for _, attr := range lmc.Attributes {
+		if err := attr.Validate(); err != nil {
+			return err
+		}
+	}
+
+	if err := errorIfUnknown(lmc.UnknownFields); err != nil {
+		return err
+	}
+
 	return nil
 }
 
-func (*LogSeverityMatcher) Validate() error {
-	// TODO: implement
+func validateLogAttributeLocation(s string) error {
+	if s == "resource" || s == "scope" || s == "logrecord" {
+		return nil
+	}
+	return fmt.Errorf("Invalid log attribute location: '%v'; valid options are: ['resource', 'scope', 'logrecord'].", s)
+}
+
+func (lam *LogAttributesMatcher) Validate() error {
+	if len(lam.Key) == 0 {
+		return errors.New("Must specify a non-empty key")
+	}
+
+	for _, location := range lam.Locations {
+		if err := validateLogAttributeLocation(location); err != nil {
+			return err
+		}
+	}
+
+	if lam.Value != nil && lam.Absent {
+		return errors.New("Cannot specify both 'value:' and 'absent: true'.")
+	}
+
+	if lam.Value != nil {
+		if err := lam.Value.Validate(); err != nil {
+			return err
+		}
+	}
+
+	if err := errorIfUnknown(lam.UnknownFields); err != nil {
+		return err
+	}
+
 	return nil
 }
 
-func (*LogAttributesMatcher) Validate() error {
-	// TODO: implement
+func (lavm *LogsAttributeValueMatcher) Validate() error {
+	if lavm.StringValue != nil {
+		if err := lavm.StringValue.Validate(); err != nil {
+			return err
+		}
+	}
+
+	if err := errorIfUnknown(lavm.UnknownFields); err != nil {
+		return err
+	}
 	return nil
 }
 
-func (*LogsAttributeValueMatcher) Validate() error {
-	// TODO: implement
+func (lsavm *LogsStringAttributeValueMatcher) Validate() error {
+	if lsavm.StartsWith != nil && *(lsavm.StartsWith) == "" {
+		return errors.New("If set, 'starts_with' must not be empty.")
+	}
+	if lsavm.EndsWith != nil && *(lsavm.EndsWith) == "" {
+		return errors.New("If set, 'ends_with' must not be empty.")
+	}
+	if lsavm.Contains != nil && *(lsavm.Contains) == "" {
+		return errors.New("If set, 'contains' must not be empty.")
+	}
+	if err := errorIfUnknown(lsavm.UnknownFields); err != nil {
+		return err
+	}
 	return nil
 }
 
-func (*LogsStringAttributeValueMatcher) Validate() error {
-	// TODO: implement
+func (lbc *LogsBodyConfig) Validate() error {
+	for _, rule := range lbc.Rule {
+		if err := rule.Validate(); rule != nil {
+			return err
+		}
+	}
+	if err := errorIfUnknown(lbc.UnknownFields); err != nil {
+		return err
+	}
 	return nil
 }
 
-func (*LogsBodyConfig) Validate() error {
-	// TODO: implement
+func (lac *LogsAttributeConfig) Validate() error {
+	for _, rule := range lac.Rule {
+		if err := rule.Validate(); rule != nil {
+			return err
+		}
+	}
+	if err := errorIfUnknown(lac.UnknownFields); err != nil {
+		return err
+	}
 	return nil
 }
 
-func (*LogsAttributeConfig) Validate() error {
-	// TODO: implement
+func (lbcr *LogBodyConfigRule) Validate() error {
+	if lbcr.Name == "" {
+		return errors.New("Must specify a name for the log body config rule")
+	}
+	if lbcr.Match != nil {
+		if err := lbcr.Match.Validate(); err != nil {
+			return err
+		}
+	}
+	if lbcr.Action != nil {
+		if err := lbcr.Action.Validate(); err != nil {
+			return err
+		}
+	}
+	if err := errorIfUnknown(lbcr.UnknownFields); err != nil {
+		return err
+	}
 	return nil
 }
 
-func (*LogBodyConfigRule) Validate() error {
-	// TODO: implement
-	return nil
-}
-
-func (*LogBodyMatchConfig) Validate() error {
-	// TODO: implement
+func (lbmc *LogBodyMatchConfig) Validate() error {
+	if lbmc.JMESPath == "" {
+		return errors.New("Must specify a non-empty 'jmespath' query.")
+	}
+	if err := errorIfUnknown(lbmc.UnknownFields); err != nil {
+		return err
+	}
 	return nil
 }
